@@ -12,8 +12,9 @@ export async function createExportDestination({fileHandle,estimatedBytes,extensi
   if(!handle&&navigator.storage?.getDirectory){
     try{
       root=await (await navigator.storage.getDirectory()).getDirectoryHandle('prism-exports',{create:true});
-      const {quota,usage}=await navigator.storage.estimate();
-      if(quota&&estimatedBytes>(quota-(usage||0))*.9)throw new DOMException('Not enough temporary disk space.','QuotaExceededError');
+      // Quota estimates and codec size estimates are not reservations. In particular,
+      // raw RGBA size grossly overestimates ProRes. Let actual disk writes enforce
+      // the quota instead of rejecting a render before encoding its first frame.
       // Only remove abandoned exports created by this app, after 24 hours.
       for await(const [entry,entryHandle] of root.entries()){
         const match=/^prism-(\d+)-[a-z0-9-]+\.(?:mp4|webm|mov)$/.exec(entry);
@@ -22,7 +23,7 @@ export async function createExportDestination({fileHandle,estimatedBytes,extensi
       name=`prism-${Date.now()}-${crypto.randomUUID()}.${extension}`;
       handle=await root.getFileHandle(name,{create:true});
     }catch(error){
-      if(error.name==='QuotaExceededError')throw Error('There is not enough free browser storage for this export. Free disk space or open Prism in a browser with direct file saving.');
+      if(error.name==='QuotaExceededError')throw new DOMException('Browser temporary storage is full. Open Prism in a full desktop browser and choose a save location, or free browser storage and retry.','QuotaExceededError');
       root=null;name=null;handle=null;
     }
   }

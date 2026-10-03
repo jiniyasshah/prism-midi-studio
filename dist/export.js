@@ -133,7 +133,7 @@ export async function exportMp4(options){
           const sample=new VideoSample(rgba,{format:'RGBA',codedWidth:width,codedHeight:height,timestamp:i/fps,duration:1/fps});
           try{await video.add(sample);}finally{sample.close();}
         }else await video.add(i/fps,1/fps);
-        if(prores||i%5===0){onProgress(`Exporting ${label} · ${Math.round((i+1)/timing.frames*100)}% · ${destination.kind==='file'?'Saving to disk':'Writing video'}`);await yieldToUI();}
+        if(prores||i%5===0){onProgress(`Exporting ${label} · ${Math.round((i+1)/timing.frames*100)}% · ${destination.kind==='file'?'Saving to disk':destination.kind==='temporary'?'Writing to browser storage':'Writing to memory'}`);await yieldToUI();}
       }
     }
     check(signal);video.close();audioSource?.close();onProgress(`Finalizing ${label}…`);await output.finalize();check(signal);
@@ -141,7 +141,7 @@ export async function exportMp4(options){
   }catch(error){
     if(output)await output.cancel().catch(()=>{});
     if(destination)await destination.abort().catch(()=>{});
-    if(error.name==='QuotaExceededError')throw Error('The disk ran out of space while exporting. Free space and try again.');
+    if(error.name==='QuotaExceededError')throw Error(destination?.kind==='file'?'The selected disk ran out of space while writing the video. Free space or choose a different disk.':'Browser temporary storage filled while writing the video. Open Prism in a full desktop browser and choose a save location, or free browser storage and retry.');
     throw error;
   }
 }
