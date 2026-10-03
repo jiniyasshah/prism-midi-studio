@@ -1,3 +1,5 @@
 Mediabunny 1.55.6: see mediabunny-LICENSE.txt.
 @mediabunny/aac-encoder 1.55.6: see aac-encoder-LICENSE.txt and aac-encoder-source.tar.gz. The ESM peer import is redirected to ./mediabunny.mjs; the encoder implementation is unchanged.
 AAC uses the packaged FFmpeg WebAssembly encoder. Project and build instructions: https://github.com/Vanilagy/mediabunny/tree/v1.55.6/packages/aac-encoder
+
+prores-wasm-encoder 1.0.1 (Olivier Estevez), LGPL-2.1-or-later. See prores/LICENSE.txt and prores/source.tar.gz (source commit 1deafdbc78277d1ba9e37704dfc60799c7f854c3, including build instructions). The adapter's peer import is redirected to ../mediabunny.mjs; encoder code is unchanged. The replaceable ESM/WASM library is loaded separately from the application. https://github.com/OlivierEstevez/ProRes-WASM-encoder

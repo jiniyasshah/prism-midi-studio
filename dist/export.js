@@ -1,10 +1,15 @@
 import {Synth} from './audio.js';
 import {scheduleAudioBuffer} from './audio-sync.js';
-import {Output, Mp4OutputFormat, WebMOutputFormat, CanvasSource, AudioBufferSource, Quality, canEncodeVideo, canEncodeAudio} from './vendor/mediabunny.mjs';
+import {Output, Mp4OutputFormat, WebMOutputFormat, MovOutputFormat, VideoSampleSource, VideoSample, CanvasSource, AudioBufferSource, Quality, canEncodeVideo, canEncodeAudio} from './vendor/mediabunny.mjs';
 
 import {createExportDestination} from './export-storage.js';
 
 let softwareAacReady=false;
+let proresReady=false;
+export async function ensureProResEncoder(){
+ if(!proresReady){const {registerProResEncoder}=await import('./vendor/prores/prores-encoder-mediabunny.mjs');registerProResEncoder({workers:Math.min(2,globalThis.navigator?.hardwareConcurrency||1)});proresReady=true;}
+}
+
 export async function ensureAudioEncoder(onProgress){
   const config={sampleRate:48000,numberOfChannels:2,quality:new Quality({bitrate:320000})};
   if(await canEncodeAudio('aac',config))return;
@@ -83,22 +88,25 @@ export function audioWindow(song,trackStart,offset,length,speed){
 export async function exportMp4(options){
   const {canvas,draw,width,height,fps,bitrate,includeAudio,signal,onProgress,start,end,speed,fileHandle}=options;
   const timing=exportTiming(start,end,speed,fps),quality=new Quality({bitrate});
-  const transparent=options.transparent===true,codec=transparent?'vp9':'avc',audioCodec=transparent?'opus':'aac',label=transparent?'WebM':'MP4';
+  const transparent=options.transparent===true,prores=transparent&&options.transparentFormat==='prores',codec=prores?'prores':transparent?'vp9':'avc',audioCodec=prores?'pcm-s24':transparent?'opus':'aac',label=prores?'ProRes MOV':transparent?'WebM':'MP4';
+  if(prores){onProgress('Loading ProRes 4444 encoder…');await ensureProResEncoder();}
+  const videoConfig={codec,quality,alpha:transparent?'keep':'discard',latencyMode:'quality',keyFrameInterval:2,...(prores?{fullCodecString:'ap4h'}:{})};
   check(signal);
-  if(!await canEncodeVideo(codec,{width,height,quality,latencyMode:'quality'}))throw Error(`This browser cannot export ${transparent?'VP9 transparent WebM':'H.264 MP4'} at these settings. Try a lower resolution or another browser.`);
+  if(!await canEncodeVideo(codec,{width,height,...videoConfig}))throw Error(`This browser cannot export ${prores?'ProRes MOV':transparent?'VP9 WebM':'H.264 MP4'} at these settings. Try a lower resolution or another browser.`);
   if(includeAudio){
     if(!globalThis.OfflineAudioContext)throw Error('Offline audio rendering is unavailable in this browser.');
-    if(transparent){if(!await canEncodeAudio('opus',{sampleRate:48000,numberOfChannels:2,quality:new Quality({bitrate:320000})}))throw Error('Opus audio encoding is unavailable. Turn off Include audio for a silent transparent WebM, or use another browser.');}
+    if(prores){if(!await canEncodeAudio(audioCodec,{sampleRate:48000,numberOfChannels:2}))throw Error('PCM audio encoding is unavailable.');}
+    else if(transparent){if(!await canEncodeAudio('opus',{sampleRate:48000,numberOfChannels:2,quality:new Quality({bitrate:320000})}))throw Error('Opus audio encoding is unavailable. Turn off Include audio for a silent transparent WebM, or use another browser.');}
     else await ensureAudioEncoder(onProgress);
   }
   check(signal);
   let output,destination;
   try{
-    destination=await createExportDestination({fileHandle,estimatedBytes:timing.duration*(bitrate*(transparent?2:1)+320000)/8*1.25,extension:transparent?'webm':'mp4',mimeType:transparent?'video/webm':'video/mp4'});
+    destination=await createExportDestination({fileHandle,estimatedBytes:timing.duration*(prores?width*height*fps*4:(bitrate*(transparent?2:1)+320000)/8*1.25),extension:prores?'mov':transparent?'webm':'mp4',mimeType:prores?'video/quicktime':transparent?'video/webm':'video/mp4'});
     check(signal);draw(start);
     // Standard MP4 with metadata at the end: no whole-file buffering.
-    output=new Output({format:transparent?new WebMOutputFormat():new Mp4OutputFormat({fastStart:false}),target:destination.target});
-    const video=new CanvasSource(canvas,{codec,quality,alpha:transparent?'keep':'discard',latencyMode:'quality',keyFrameInterval:2});
+    output=new Output({format:prores?new MovOutputFormat({fastStart:false}):transparent?new WebMOutputFormat():new Mp4OutputFormat({fastStart:false}),target:destination.target});
+    const video=prores?new VideoSampleSource(videoConfig):new CanvasSource(canvas,videoConfig);
     output.addVideoTrack(video,{frameRate:fps});
     let audioSource;
     if(includeAudio){audioSource=new AudioBufferSource({codec:audioCodec,quality:new Quality({bitrate:320000})});output.addAudioTrack(audioSource);}
@@ -118,8 +126,14 @@ export async function exportMp4(options){
         rendered=null;check(signal);await audioSource.add(audio);
       }
       for(let i=section;i<stopFrame;i++){
-        check(signal);draw(timing.songTime(i));await video.add(i/fps,1/fps);
-        if(i%5===0){onProgress(`Exporting ${label} · ${Math.round((i+1)/timing.frames*100)}% · ${destination.kind==='file'?'Saving to disk':'Writing video'}`);await yieldToUI();}
+        check(signal);draw(timing.songTime(i));
+        if(prores){
+          // Read straight RGBA directly, avoiding WebCodecs color/alpha conversion.
+          const rgba=canvas.getContext('2d').getImageData(0,0,width,height).data;
+          const sample=new VideoSample(rgba,{format:'RGBA',codedWidth:width,codedHeight:height,timestamp:i/fps,duration:1/fps});
+          try{await video.add(sample);}finally{sample.close();}
+        }else await video.add(i/fps,1/fps);
+        if(prores||i%5===0){onProgress(`Exporting ${label} · ${Math.round((i+1)/timing.frames*100)}% · ${destination.kind==='file'?'Saving to disk':'Writing video'}`);await yieldToUI();}
       }
     }
     check(signal);video.close();audioSource?.close();onProgress(`Finalizing ${label}…`);await output.finalize();check(signal);

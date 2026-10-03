@@ -6,15 +6,16 @@ import {drawCreativeScene} from './creative-scenes.js';
 import {scheduleAudioBuffer,makeWaveform} from './audio-sync.js';
 import {palettes,paletteNames,modeNames,drawBackground,drawParticles,drawExtraScene,midiEnergy} from './studio-visuals.js';
 import {exportMp4} from './export.js';
+import {parseScene} from './scene-settings.js';
 import {pickExportFile} from './export-storage.js';
 const $=id=>document.getElementById(id), $$=s=>[...document.querySelectorAll(s)];
-const defaults={mode:'vertical',preset:'aurora',timeWindow:7,noteWidth:.82,roundness:5,opacity:.88,velocitySize:true,glow:18,glowStrength:.55,particles:true,particleCount:12,particleSize:2,particleSpread:36,particleLife:.8,trails:true,trailLength:1.4,cometSize:4,grid:true,gridOpacity:.13,beatLines:true,keyboard:true,keyboardHeight:62,keyLabels:true,noteLabels:false,octaveLines:true,background:'#080c17',ambient:true,ambientStrength:.18,playhead:true,playheadColor:'#b9d9ff',playheadWidth:1.2,gradient:true,transpose:0,pitchRange:'auto',minPitch:21,maxPitch:108,brightness:.5,space:.35,colorMode:'track',saturation:100,zoom:1,showTime:false,showTitle:false,titleSize:24,horizontalHead:.16,sustainGlow:true,customColors:palettes.aurora.join(','),particleVelocity:true,particleShape:'dots',particleMotion:'burst',orbitRadius:.25,pulseHeight:1,ribbonWave:20,bgMotion:'drift',bgMovement:.5,bgSpeed:1,bgOpacity:1,bgBlur:3,bgSaturation:85,bgBrightness:1,bgPulse:.4,bgDim:.35,bgVignette:.65,bgTint:'#a78af3',bgTintAmount:.12,bgDust:60,dustColorMode:'palette',dustColor:'#d8ccff',dustShape:'dots',dustSize:4,dustVariation:.4,dustOpacity:.6,dustGlow:8,dustSpeed:.6,dustDirection:270,dustMotion:'drift',dustClockwise:true,dustWander:.4,dustTwinkle:.35,dustBeat:false,dustBeatStrength:.6,dustBeatDivision:1,dustBeatDecay:6,dustBlend:'screen',dustSeed:42,spiralTurns:1.4,creativeRotation:.1,tunnelDepth:6,rippleSize:90,rippleLife:3};
+const defaults={dustEnabled:true,imageEnabled:true,notesEnabled:true,mode:'vertical',preset:'aurora',timeWindow:7,noteWidth:.82,roundness:5,opacity:.88,velocitySize:true,glow:18,glowStrength:.55,particles:true,particleCount:12,particleSize:2,particleSpread:36,particleLife:.8,trails:true,trailLength:1.4,cometSize:4,grid:true,gridOpacity:.13,beatLines:true,keyboard:true,keyboardHeight:62,keyLabels:true,noteLabels:false,octaveLines:true,background:'#080c17',ambient:true,ambientStrength:.18,playhead:true,playheadColor:'#b9d9ff',playheadWidth:1.2,gradient:true,transpose:0,pitchRange:'auto',minPitch:21,maxPitch:108,brightness:.5,space:.35,colorMode:'track',saturation:100,zoom:1,showTime:false,showTitle:false,titleSize:24,horizontalHead:.16,sustainGlow:true,customColors:palettes.aurora.join(','),particleVelocity:true,particleShape:'dots',particleMotion:'burst',orbitRadius:.25,pulseHeight:1,ribbonWave:20,bgMotion:'drift',bgMovement:.5,bgSpeed:1,bgOpacity:1,bgBlur:3,bgSaturation:85,bgBrightness:1,bgPulse:.4,bgDim:.35,bgVignette:.65,bgTint:'#a78af3',bgTintAmount:.12,bgDust:60,dustColorMode:'palette',dustColor:'#d8ccff',dustShape:'dots',dustSize:4,dustVariation:.4,dustOpacity:.6,dustGlow:8,dustSpeed:.6,dustDirection:270,dustMotion:'drift',dustClockwise:true,dustWander:.4,dustTwinkle:.35,dustBeat:false,dustBeatStrength:.6,dustBeatDivision:1,dustBeatDecay:6,dustBlend:'screen',dustSeed:42,dustFlutter:.6,dustSpin:.7,spiralTurns:1.4,creativeRotation:.1,tunnelDepth:6,rippleSize:90,rippleLife:3};
 let saved={};try{saved=JSON.parse(localStorage.getItem('prism-settings')||'{}')||{};}catch{}
 let settings={...defaults};for(const k of Object.keys(defaults)){if(typeof saved[k]===typeof defaults[k])settings[k]=saved[k];}
 for(const key of ['background','playheadColor','bgTint','dustColor'])if(!/^#[0-9a-f]{6}$/i.test(settings[key]))settings[key]=defaults[key];
 if(!/^(#[0-9a-f]{6},){5}#[0-9a-f]{6}$/i.test(settings.customColors))settings.customColors=defaults.customColors;palettes.custom=settings.customColors.split(',');
 if(!Object.hasOwn(palettes,settings.preset))settings.preset='aurora';if(!Object.hasOwn(modeNames,settings.mode))settings.mode='vertical';
-const groups=[
+const originalGroups=[
   {name:'Notes & motion',open:true,items:[['timeWindow','Visible time',2,20,.5,' s'],['noteWidth','Note width',.25,1,.01,'%'],['roundness','Roundness',0,18,1,' px'],['opacity','Note opacity',.1,1,.01,'%'],['velocitySize','Size by velocity','toggle'],['gradient','Gradient notes','toggle'],['noteLabels','Show note names','toggle'],['colorMode','Color by','select',[['track','Track'],['pitch','Pitch class'],['velocity','Velocity']]],['zoom','Pitch zoom',.5,2,.05,'×']]},
   {name:'Key-hit particles & glow',open:true,items:[['glow','Glow radius',0,50,1,' px'],['glowStrength','Glow strength',0,1,.01,'%'],['sustainGlow','Illuminate held notes','toggle'],['particles','Particle effects','toggle'],['particleCount','Particles per hit',0,120,1,''],['particleVelocity','Scale amount by velocity','toggle'],['particleMotion','Emission','select',[['burst','Burst on note hit'],['stream','Stream while held']]],['particleShape','Particle shape','select',[['dots','Soft dots'],['sparks','Light sparks'],['squares','Confetti']]],['particleSize','Particle size',.5,5,.1,' px'],['particleSpread','Particle spread',5,200,1,' px'],['particleLife','Particle lifetime',.2,4,.1,' s']]},
   {name:'New style controls',items:[['orbitRadius','Orbit radius',.12,.38,.01,'%'],['pulseHeight','Pulse bar height',.3,1.2,.05,'×'],['ribbonWave','Ribbon wave',0,60,1,' px'],['spiralTurns','Spiral turns',.3,3,.1,''],['creativeRotation','Spiral rotation',0,.5,.01,' rad/s'],['tunnelDepth','Tunnel depth',2,12,1,''],['rippleSize','Ripple size',20,160,5,' px'],['rippleLife','Ripple lifetime',.5,4,.1,' s']]},
@@ -27,9 +28,37 @@ const groups=[
   {name:'Sound',items:[['transpose','Transpose',-24,24,1,' st'],['brightness','Tone brightness',0,1,.01,'%'],['space','Echo ambience',0,1,.01,'%']]},
   {name:'Video overlays',items:[['showTitle','Show song title','toggle'],['titleSize','Title size',14,56,1,' px'],['showTime','Show playback time','toggle']]}
 ];
+const controlItems=new Map(originalGroups.flatMap(group=>group.items).map(item=>[item[0],item]));
+for(const item of [['notesEnabled','Notes','toggle'],['dustEnabled','Floating particles','toggle'],['imageEnabled','Background image','toggle'],['dustFlutter','Flutter amount',0,2,.05,'×'],['dustSpin','Tumbling speed',0,3,.05,'×']])controlItems.set(item[0],item);
+controlItems.get('dustShape')[3].push(['fire','Fire flakes'],['petals','Cherry petals']);
+controlItems.get('dustColorMode')[3].push(['fire','Fire colors'],['cherry','Cherry blossom colors']);
+const defineGroup=(name,panel,keys,extra={})=>({name,panel,items:keys.split(' ').map(key=>controlItems.get(key)),...extra});
+const groups=[
+ defineGroup('Show / hide','visual','notesEnabled keyboard keyLabels noteLabels grid octaveLines beatLines playhead particles dustEnabled imageEnabled ambient showTitle showTime',{id:'visibility',open:true}),
+ defineGroup('Notes & colors','visual','timeWindow noteWidth roundness opacity velocitySize gradient colorMode saturation zoom',{id:'notes'}),
+ defineGroup('Glow & highlights','visual','glow glowStrength sustainGlow',{id:'glow'}),
+ defineGroup('Note-hit particles','visual','particleCount particleVelocity particleMotion particleShape particleSize particleSpread particleLife',{id:'hit-particles'}),
+ defineGroup('Keyboard & pitch range','visual','keyboardHeight pitchRange minPitch maxPitch',{id:'keyboard'}),
+ defineGroup('Grid & playhead appearance','visual','gridOpacity playheadColor playheadWidth horizontalHead',{id:'guides'}),
+ defineGroup('Title appearance','visual','titleSize',{id:'titles'}),
+ defineGroup('Comet style','visual','trails trailLength cometSize',{id:'comet',mode:'comet'}),
+ defineGroup('Orbit style','visual','orbitRadius',{id:'orbit',mode:'orbit'}),
+ defineGroup('Pulse bars style','visual','pulseHeight',{id:'pulse',mode:'pulse'}),
+ defineGroup('Ribbon flow style','visual','ribbonWave',{id:'ribbon',mode:'ribbon'}),
+ defineGroup('Spiral galaxy style','visual','spiralTurns creativeRotation',{id:'spiral',mode:'spiral'}),
+ defineGroup('Neon tunnel style','visual','tunnelDepth',{id:'tunnel',mode:'tunnel'}),
+ defineGroup('Ripple field style','visual','rippleSize rippleLife',{id:'ripples',mode:'ripples'}),
+ defineGroup('Background & ambient light','scene','background ambientStrength',{id:'backdrop',target:'image-controls'}),
+ defineGroup('Image motion','scene','bgMotion bgMovement bgSpeed bgPulse',{id:'image-motion',target:'image-controls'}),
+ defineGroup('Image color & finishing','scene','bgBlur bgBrightness bgSaturation bgOpacity bgDim bgVignette bgTint bgTintAmount',{id:'image-color',target:'image-controls'}),
+ defineGroup('Particle appearance','scene','bgDust dustShape dustColorMode dustColor dustSize dustVariation dustOpacity dustGlow dustBlend dustTwinkle',{id:'atmosphere',open:true}),
+ defineGroup('Particle movement','scene','dustMotion dustSpeed dustDirection dustClockwise dustWander dustFlutter dustSpin dustSeed',{id:'particle-motion'}),
+ defineGroup('Particle beat sync','scene','dustBeat dustBeatStrength dustBeatDivision dustBeatDecay',{id:'particle-beat'}),
+ defineGroup('MIDI synth sound','tracks','transpose brightness space',{id:'sound'})
+];
 const synth=new Synth();let song,tracks=new Map(),title='First Light',isDemo=true,playing=false,position=0,anchorPos=0,anchorTime=0,speed=1,nextNote=0,loop=false,loopA=0,loopB=41,recording=false,recorder=null,recordStop=0,recordStart=0,cancelled=false,playRequest=0,recordChunks=[],captureStream=null,recordMime='',exportSize=null,installPrompt=null,toastTimer=0,dragDepth=0;
 const external={buffer:null,name:'',mode:'synth',offset:0,rate:1,gain:1,peaks:null};let externalVoice=null,assetBusy=false;
-let backgroundImage=null;
+let backgroundImage=null,backgroundName='',pendingSceneAudio=null,pendingSceneTracks=null,pendingScenePlayback=null;
 let directExport=false,exportAbort=null,lastExport=null;
 async function releaseExport(){if(!lastExport)return;const old=lastExport;lastExport=null;URL.revokeObjectURL(old.url);await old.cleanup();$('download-mp4').hidden=true;}
 window.addEventListener('pagehide',()=>{releaseExport().catch(()=>{});});
@@ -42,8 +71,8 @@ function toast(message){$('toast').textContent=message;$('toast').hidden=false;c
 function persist(){try{localStorage.setItem('prism-settings',JSON.stringify(settings));}catch{}}
 function displayValue(item,value){return item[5]==='%'?`${Math.round(value*100)}%`:item[5]==='%raw'?`${value}%`:`${Number(value.toFixed(2))}${item[5]||''}`;}
 function buildControls(){
-  $('visual-controls').replaceChildren();$('scene-controls').replaceChildren();$('image-controls').replaceChildren();
-  for(const group of groups){const details=document.createElement('details');details.open=!!group.open;const summary=document.createElement('summary');summary.textContent=group.name;details.append(summary);
+  $('visibility-controls').replaceChildren();$('visual-controls').replaceChildren();$('scene-controls').replaceChildren();$('image-controls').replaceChildren();$('sound-controls').replaceChildren();
+  for(const group of groups){const details=document.createElement('details');details.id=`group-${group.id}`;details.dataset.styleMode=group.mode||'';details.open=!!group.open;details.classList.toggle('visibility-group',group.id==='visibility');const summary=document.createElement('summary');summary.textContent=group.name;details.append(summary);
     for(const item of group.items){const [key,name,type]=item;const label=document.createElement('label');let input;
       if(type==='toggle'){label.className='toggle-row';const span=document.createElement('span');span.textContent=name;input=document.createElement('input');input.type='checkbox';input.checked=settings[key];label.append(span,input);}
       else if(type==='color'){label.className='toggle-row';const span=document.createElement('span');span.textContent=name;input=document.createElement('input');input.type='color';input.className='color-input';input.value=settings[key];label.append(span,input);}
@@ -53,12 +82,24 @@ function buildControls(){
         label.append(input);
       }
       input.id=`setting-${key}`;input.setAttribute('aria-label',name);input.addEventListener('input',()=>{const val=type==='toggle'?input.checked:typeof type==='number'?Number(input.value):input.value;settings[key]=val;const out=$(`value-${key}`);if(out)out.textContent=displayValue(item,val);if(key==='transpose')reschedule();if(key==='space')synth.setSpace(val);persist();});details.append(label);
-    }$(group.panel==='scene'?(group.name==='Image effects'?'image-controls':'scene-controls'):'visual-controls').append(details);
+    }$(group.id==='visibility'?'visibility-controls':group.target||(group.panel==='scene'?'scene-controls':group.panel==='tracks'?'sound-controls':'visual-controls')).append(details);
   }
   $('preset').value=settings.preset;syncPalette();setMode(settings.mode);
 }
 function syncPalette(){const p=palettes[settings.preset];$$('#palette-preview i').forEach((el,i)=>el.style.background=p[i]);$('custom-palette').hidden=settings.preset!=='custom';$$('#custom-palette input').forEach((el,i)=>el.value=palettes.custom[i]);}
-function setMode(mode){if(recording)return;settings.mode=mode;$$('[data-mode]').forEach(b=>{const on=b.dataset.mode===mode;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',on);});$('mode-label').textContent=modeNames[mode];persist();}
+function setMode(mode){if(recording)return;settings.mode=mode;$$('[data-mode]').forEach(b=>{const on=b.dataset.mode===mode;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',on);});$('mode-label').textContent=modeNames[mode];for(const group of groups)if(group.mode){const el=$(`group-${group.id}`);if(el)el.hidden=group.mode!==mode;}persist();}
+function settingsSearch(){
+ const query=$('settings-search').value.trim().toLowerCase(),results=$('settings-results');results.replaceChildren();results.hidden=!query;if(!query)return;
+ const tokens=query.split(/\s+/).map(t=>t==='keywords'?'keyboard':t.replace(/s$/,''));let found=0;
+ for(const group of groups)for(const [key,name] of group.items){
+  const haystack=`${group.name} ${name} ${key} ${key==='keyboard'?'piano keys':''}`.toLowerCase();if(!tokens.every(t=>haystack.includes(t)))continue;
+  if(found++>=30)continue;const button=document.createElement('button');button.type='button';button.className='settings-result';button.textContent=`${name} · ${group.panel==='visual'?'Visuals':group.panel==='scene'?'Scene':'Tracks'} / ${group.name}`;
+  button.addEventListener('click',()=>{if(recording)return;showPanel(group.panel);if(group.mode)setMode(group.mode);const section=$(`group-${group.id}`);section.open=true;$('settings-search').value='';results.hidden=true;const input=$(`setting-${key}`);input.focus();input.scrollIntoView({block:'center',behavior:'smooth'});});results.append(button);
+ }
+ if(!found){const p=document.createElement('p');p.textContent='No settings found. Try keyboard, grid, glow, or particles.';results.append(p);}
+}
+$('settings-search').addEventListener('input',settingsSearch);
+$('hide-guides').addEventListener('click',()=>{if(recording)return;for(const key of ['grid','octaveLines','beatLines','playhead','keyLabels','noteLabels','showTitle','showTime'])settings[key]=false;buildControls();persist();toast('Guides and labels hidden.');});
 function showPanel(name){$$('[data-panel]').forEach(b=>{const on=b.dataset.panel===name;b.setAttribute('aria-selected',on);b.tabIndex=on?0:-1;$(`panel-${b.dataset.panel}`).hidden=!on;});}
 function loadSong(data,name,demo=false){
   pause();song=data;title=name;isDemo=demo;tracks=new Map();data.tracks.forEach((t,i)=>tracks.set(t.id,{...t,color:palettes[settings.preset][i%6],visible:true,mute:false,solo:false,volume:1,pan:0,instrument:'auto'}));
@@ -66,7 +107,7 @@ function loadSong(data,name,demo=false){
   for(let i=0;i<song.tempoMap.length;i++){const seg=song.tempoMap[i],end=song.tempoMap[i+1]?.seconds??song.duration,quarter=seg.mpqn/1e6,first=seg.tick/(song.ppq||480);for(let b=Math.ceil(first);song.beats.length<200000;b++){const time=seg.seconds+(b-first)*quarter;if(time>=end)break;song.beats.push({time,bar:b%4===0});}}
   song.maxDuration=song.notes.reduce((m,n)=>Math.max(m,n.duration),0);position=0;loop=false;loopA=0;loopB=song.duration;nextNote=0;
   $('song-title').textContent=title;$('song-info').textContent=`${demo?'Demo composition':'MIDI'} · ${tracks.size} ${tracks.size===1?'track':'tracks'} · ${song.bpm} BPM${song.tempoMap.length>1?' · variable tempo':''}`;
-  $('demo-badge').hidden=!demo;$('track-count').textContent=tracks.size;$('seek').max=song.duration;$('duration').textContent=fmt(song.duration);$('loop-start').max=Math.max(0,song.duration-.1);$('loop-end').max=song.duration;$('loop-end').value=song.duration.toFixed(1);$('loop-start').value='0';$('loop-toggle').setAttribute('aria-pressed','false');$('loop-controls').hidden=true;buildTracks();updateTimeline();drawAudioWaveform();
+  $('demo-badge').hidden=!demo;$('track-count').textContent=tracks.size;$('seek').max=song.duration;$('duration').textContent=fmt(song.duration);$('loop-start').max=Math.max(0,song.duration-.1);$('loop-end').max=song.duration;$('loop-end').value=song.duration.toFixed(1);$('loop-start').value='0';$('loop-toggle').setAttribute('aria-pressed','false');$('loop-controls').hidden=true;if(pendingSceneTracks)restoreTrackSettings(pendingSceneTracks);if(pendingScenePlayback?.title===title){restorePlayback(pendingScenePlayback.settings);pendingScenePlayback=null;}buildTracks();updateTimeline();drawAudioWaveform();
 }
 function buildTracks(){
   const list=$('track-list');list.replaceChildren();for(const track of tracks.values()){
@@ -114,8 +155,8 @@ function drawFrame(time=now()){if(!song)return;
   const whites=[];for(let p=min;p<=max;p++)if(!isBlack(p))whites.push(p);const keyW=w/Math.max(whites.length,1),keyMap=new Map();let whiteIndex=0;
   for(let p=min;p<=max;p++){if(!isBlack(p)){keyMap.set(p,{x:whiteIndex*keyW,w:keyW});whiteIndex++;}else keyMap.set(p,{x:whiteIndex*keyW-keyW*.3,w:keyW*.6});}
   const rowH=(h-28)/count,pitchY=p=>14+(max-p+.5)*rowH;
-  const budget={left:6000},visibleNotes=song.notes.slice(lowerBound(t-song.maxDuration-4),lowerBound(t+settings.timeWindow+1));
-  if(!transparent)drawBackground(ctx,backgroundImage,w,h,t,settings,palettes[settings.preset][0],midiEnergy(visibleNotes,t,tracks));
+  const budget={left:6000},visibleNotes=settings.notesEnabled?song.notes.slice(lowerBound(t-song.maxDuration-4),lowerBound(t+settings.timeWindow+1)):[];
+  if(!transparent&&settings.imageEnabled)drawBackground(ctx,backgroundImage,w,h,t,settings,palettes[settings.preset][0],midiEnergy(visibleNotes,t,tracks));
   if(!transparent&&settings.ambient){const g=ctx.createRadialGradient(w*.55,h*.64,0,w*.5,h*.5,Math.max(w,h)*.65);g.addColorStop(0,rgba(palettes[settings.preset][0],settings.ambientStrength));g.addColorStop(1,'transparent');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
   drawAtmosphere(ctx,w,h,t,settings,palettes[settings.preset],song);
   if(settings.mode==='orbit'||settings.mode==='pulse'){drawExtraScene(ctx,{mode:settings.mode,w,h,t,s:settings,notes:visibleNotes,tracks,min,max,colorFor:noteColor,noteName,budget});drawOverlays(w,h,t);updateTimeline();return;}
@@ -126,7 +167,7 @@ function drawFrame(time=now()){if(!song)return;
   if(settings.beatLines){ctx.strokeStyle=`rgba(133,152,191,${settings.gridOpacity*.8})`;let lo=0,hi=song.beats.length;while(lo<hi){const mid=(lo+hi)>>1;if(song.beats[mid].time<t-headX/scale)lo=mid+1;else hi=mid;}for(let bi=lo;bi<song.beats.length;bi++){const beat=song.beats[bi];if(beat.time>t+settings.timeWindow+1)break;const pos=vertical?baseline-(beat.time-t)*scale:headX+(beat.time-t)*scale;ctx.beginPath();if(vertical){if(pos<0||pos>baseline)continue;ctx.moveTo(0,pos);ctx.lineTo(w,pos);}else{if(pos<keySize||pos>w)continue;ctx.moveTo(pos,0);ctx.lineTo(pos,h);}ctx.globalAlpha=beat.bar?1:.45;ctx.stroke();}ctx.globalAlpha=1;}
   const active=new Map(),startIndex=lowerBound(t-song.maxDuration-settings.trailLength-2);let drawn=0;
   ctx.save();ctx.beginPath();ctx.rect(vertical?0:keySize,0,vertical?w:w-keySize,vertical?baseline:h);ctx.clip();if(settings.colorMode==='track'&&settings.saturation!==100)ctx.filter=`saturate(${settings.saturation}%)`;
-  for(let i=startIndex;i<song.notes.length;i++){const n=song.notes[i];if(n.start>t+settings.timeWindow+1)break;const tr=tracks.get(n.trackId);if(!tr.visible)continue;const p=n.pitch+(n.channel===9?0:settings.transpose);if(p<min||p>max)continue;const age=t-n.start,endAge=t-n.end,held=age>=0&&endAge<0;if(held)active.set(p,noteColor(n,tr));
+  for(let i=startIndex;settings.notesEnabled&&i<song.notes.length;i++){const n=song.notes[i];if(n.start>t+settings.timeWindow+1)break;const tr=tracks.get(n.trackId);if(!tr.visible)continue;const p=n.pitch+(n.channel===9?0:settings.transpose);if(p<min||p>max)continue;const age=t-n.start,endAge=t-n.end,held=age>=0&&endAge<0;if(held)active.set(p,noteColor(n,tr));
     if(endAge>Math.max(2,settings.trailLength)||++drawn>16000)continue;
     const color=noteColor(n,tr),size=settings.noteWidth*(settings.velocitySize?.5+n.velocity*.5:1),opacity=settings.opacity*(held?1:.75),glow=held?settings.glow:settings.glow*.3;
     ctx.shadowColor=alphaColor(color,settings.glowStrength);ctx.shadowBlur=glow;
@@ -159,25 +200,25 @@ async function openFile(file){if(!file||recording||assetBusy)return;if(file.size
 function validLoop(){loopA=clamp(Number($('loop-start').value)||0,0,Math.max(0,song.duration-.1));loopB=clamp(Number($('loop-end').value)||song.duration,loopA+.1,song.duration);$('loop-start').value=loopA.toFixed(1);$('loop-end').value=loopB.toFixed(1);if(loop&&playing&&(now()<loopA||now()>=loopB))seek(loopA);}
 function saveBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 function safeName(){return title.replace(/[^a-zA-Z0-9 _-]/g,'').trim().replace(/\s+/g,'-').slice(0,80)||'prism';}
-function recordUI(on){recording=on;document.body.classList.toggle('recording',on);$('record-overlay').hidden=!on;for(const id of ['open-file','load-demo','reset','play','restart','seek','speed','loop-toggle','loop-start','loop-end','loop-set-start','loop-set-end','record','record-live','resolution','resolution-width','resolution-height','export-transparent','aspect','aspect-width','aspect-height','fps','bitrate','export-range','export-audio','snapshot'])$(id).disabled=on;for(const el of $$('#panel-visual input,#panel-visual select,#panel-visual button,#panel-scene input,#panel-scene select,#panel-scene button,#panel-tracks input,#panel-tracks select,#panel-tracks button,[data-mode],#preset,#volume')){if(on){el.dataset.exportDisabled=String(el.disabled);el.disabled=true;}else{el.disabled=el.dataset.exportDisabled==='true';delete el.dataset.exportDisabled;}}}
+function recordUI(on){recording=on;document.body.classList.toggle('recording',on);$('record-overlay').hidden=!on;for(const id of ['open-file','load-demo','reset','play','restart','seek','speed','loop-toggle','loop-start','loop-end','loop-set-start','loop-set-end','record','record-live','resolution','resolution-width','resolution-height','export-transparent','transparent-format','aspect','aspect-width','aspect-height','fps','bitrate','export-range','export-audio','snapshot'])$(id).disabled=on;for(const el of $$('#panel-visual input,#panel-visual select,#panel-visual button,#panel-scene input,#panel-scene select,#panel-scene button,#panel-tracks input,#panel-tracks select,#panel-tracks button,[data-mode],#preset,#volume')){if(on){el.dataset.exportDisabled=String(el.disabled);el.disabled=true;}else{el.disabled=el.dataset.exportDisabled==='true';delete el.dataset.exportDisabled;}}}
 async function startDirectExport(){
   if(recording||assetBusy){if(assetBusy)toast('Wait for your media to finish loading.');return;}
   const oldPosition=now();pause();validLoop();
   let size;try{size=getFrameSize();}catch(error){toast(error.message);return;}
   const start=$('export-range').value==='loop'?loopA:0,end=$('export-range').value==='loop'?loopB:song.duration;
-  const transparent=$('export-transparent').checked,label=transparent?'WebM':'MP4',extension=transparent?'webm':'mp4';
+  const transparent=$('export-transparent').checked,transparentFormat=$('transparent-format').value,prores=transparent&&transparentFormat==='prores',label=prores?'ProRes MOV':transparent?'WebM':'MP4',extension=prores?'mov':transparent?'webm':'mp4';
   directExport=true;exportAbort=new AbortController();recordUI(true);$('record-label').textContent=`Checking ${label} support…`;
   try{
-    const fileHandle=await pickExportFile(`${safeName()}-prism.${extension}`,transparent);
+    const fileHandle=await pickExportFile(`${safeName()}-prism.${extension}`,transparent,prores);
     exportAbort.signal.throwIfAborted();await releaseExport();exportSize=size;
-    const result=await exportMp4({transparent,fileHandle,canvas,draw:time=>{position=time;drawFrame(time);},song,tracks,external:{...external},settings:{...settings},volume:Number($('volume').value),speed,start,end,...size,fps:Number($('fps').value),bitrate:Number($('bitrate').value),includeAudio:$('export-audio').checked,signal:exportAbort.signal,onProgress:message=>$('record-label').textContent=message});
+    const result=await exportMp4({transparent,transparentFormat,fileHandle,canvas,draw:time=>{position=time;drawFrame(time);},song,tracks,external:{...external},settings:{...settings},volume:Number($('volume').value),speed,start,end,...size,fps:Number($('fps').value),bitrate:Number($('bitrate').value),includeAudio:$('export-audio').checked,signal:exportAbort.signal,onProgress:message=>$('record-label').textContent=message});
     if(result.blob){const url=URL.createObjectURL(result.blob);lastExport={url,cleanup:result.cleanup};const link=$('download-mp4');link.href=url;link.download=`${safeName()}-prism.${extension}`;link.textContent=`Download ${label}`;link.hidden=false;link.click();toast(`Your ${label} is ready. Use Download ${label} if the download did not start.`);}
     else toast(`Your ${label} has been saved to disk.`);
   }catch(e){toast(e.name==='AbortError'?`${label} export cancelled.`:e.message||`${label} export failed. Try a lower resolution.`);}
   finally{exportSize=null;directExport=false;exportAbort=null;recordUI(false);updateFrameChoice();position=clamp(oldPosition,0,song.duration);drawFrame();updatePlay();}
 }
 async function startRecording(){
-  if(recording||assetBusy)return;if($('export-transparent').checked){toast('Use Export transparent WebM to preserve transparency.');return;}if(typeof MediaRecorder==='undefined'||!canvas.captureStream){toast('Video recording is not supported in this browser. Try Chrome or Edge on desktop.');return;}
+  if(recording||assetBusy)return;if($('export-transparent').checked){toast('Use direct export to preserve transparency.');return;}if(typeof MediaRecorder==='undefined'||!canvas.captureStream){toast('Video recording is not supported in this browser. Try Chrome or Edge on desktop.');return;}
   try{await synth.init();pause();validLoop();exportSize=getFrameSize();
     recordStart=$('export-range').value==='loop'?loopA:0;recordStop=$('export-range').value==='loop'?loopB:song.duration;position=recordStart;
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -218,7 +259,7 @@ async function openAudio(file){
  if(file.size>150*1024*1024){toast('Choose an audio file smaller than 150 MB.');return;}
  pause();mediaLoading(true);$('audio-info').textContent='Loading audio…';
  try{await synth.init();const buffer=await synth.ctx.decodeAudioData(await file.arrayBuffer());if(buffer.length*buffer.numberOfChannels*4>512*1024*1024)throw Error('This decoded audio is too large. Try a shorter audio file.');
-  Object.assign(external,{buffer,name:file.name,mode:'file',offset:0,rate:1,gain:1,peaks:makeWaveform(buffer)});syncAudioControls();toast('Audio added. Adjust its start time if the recording has an intro.');
+  const alignment=pendingSceneAudio&&pendingSceneAudio.name===file.name?pendingSceneAudio:{mode:'file',offset:0,rate:1,gain:1};Object.assign(external,alignment,{buffer,name:file.name,peaks:makeWaveform(buffer)});if(alignment===pendingSceneAudio)pendingSceneAudio=null;syncAudioControls();toast('Audio added. Adjust its start time if the recording has an intro.');
  }catch(e){syncAudioControls();toast(e.message?.includes('too large')?e.message:'Could not decode this audio. Try a WAV or MP3 file.');}
  finally{mediaLoading(false);$('audio-input').value='';}
 }
@@ -240,44 +281,51 @@ async function openBackground(file){
  mediaLoading(true);const url=URL.createObjectURL(file);
  try{const img=new Image();img.src=url;await img.decode();if(img.naturalWidth*img.naturalHeight>64000000)throw Error('Image too large');
   const factor=Math.min(1,4096/Math.max(img.naturalWidth,img.naturalHeight));const bitmap=await createImageBitmap(img,{resizeWidth:Math.max(1,Math.round(img.naturalWidth*factor)),resizeHeight:Math.max(1,Math.round(img.naturalHeight*factor)),resizeQuality:'high'});
-  backgroundImage?.close();backgroundImage=bitmap;$('background-info').textContent=file.name;$('remove-background').hidden=false;toast('Background added. Try a scene preset or adjust its effects.');
+  backgroundImage?.close();backgroundImage=bitmap;backgroundName=file.name;$('background-info').textContent=file.name;$('remove-background').hidden=false;toast('Background added. Try a scene preset or adjust its effects.');
  }catch{toast('Could not load this image. Try a JPG, PNG or WebP under 64 megapixels.');}finally{URL.revokeObjectURL(url);mediaLoading(false);$('background-input').value='';}
 }
 $('open-background').addEventListener('click',()=>$('background-input').click());$('background-input').addEventListener('change',e=>openBackground(e.target.files[0]));
-$('remove-background').addEventListener('click',()=>{backgroundImage?.close();backgroundImage=null;$('background-info').textContent='JPG, PNG, WebP or AVIF · stays on this device';$('remove-background').hidden=true;});
-$$('[data-atmosphere]').forEach(button=>button.addEventListener('click',()=>{Object.assign(settings,atmospherePresets[button.dataset.atmosphere]);buildControls();persist();}));
+$('remove-background').addEventListener('click',()=>{backgroundImage?.close();backgroundImage=null;backgroundName='';$('background-info').textContent='JPG, PNG, WebP or AVIF · stays on this device';$('remove-background').hidden=true;});
+$$('[data-atmosphere]').forEach(button=>button.addEventListener('click',()=>{Object.assign(settings,{dustEnabled:true},atmospherePresets[button.dataset.atmosphere]);buildControls();persist();}));
 const scenePresets={cinematic:{bgMotion:'drift',bgMovement:.45,bgBlur:2,bgDim:.4,bgVignette:.75,bgTintAmount:.1,bgPulse:.3},dreamy:{bgMotion:'zoom',bgMovement:.7,bgBlur:10,bgDim:.25,bgVignette:.45,bgTintAmount:.25,bgPulse:.65},clean:{bgMotion:'still',bgMovement:0,bgBlur:0,bgDim:.15,bgVignette:.2,bgTintAmount:0,bgPulse:0}};
 $$('[data-scene]').forEach(button=>button.addEventListener('click',()=>{Object.assign(settings,scenePresets[button.dataset.scene]);buildControls();persist();}));
-$('save-look').addEventListener('click',()=>saveBlob(new Blob([JSON.stringify({format:'prism-look',version:1,settings,trackColors:[...tracks.values()].map(t=>t.color)},null,2)],{type:'application/json'}),'prism-look.json'));
+function captureFrameSettings(){
+ getFrameSize();return {aspect:$('aspect').value,width:$('aspect-width').value,height:$('aspect-height').value,resolution:$('resolution').value,pixelWidth:$('resolution-width').value,pixelHeight:$('resolution-height').value,transparent:$('export-transparent').checked,transparentFormat:$('transparent-format').value,fps:$('fps').value,bitrate:$('bitrate').value,range:$('export-range').value,includeAudio:$('export-audio').checked};
+}
+function captureScene(){return {format:'prism-scene',version:2,settings:{...settings},tracks:[...tracks.values()].map(({id,name,color,visible,mute,solo,volume,pan,instrument})=>({id,name,color,visible,mute,solo,volume,pan,instrument})),frame:captureFrameSettings(),playback:{speed,volume:Number($('volume').value),loop,loopStart:loopA,loopEnd:loopB},audio:{name:external.name,mode:external.mode,offset:external.offset,rate:external.rate,gain:external.gain},media:{midi:title,audio:external.name,image:backgroundName}};}
+function restoreTrackSettings(savedTracks){for(const tr of tracks.values()){const saved=savedTracks.find(t=>t.id===tr.id&&t.name===tr.name);if(saved){const {id,name,color,...mix}=saved;Object.assign(tr,mix);if(color)tr.color=color;}}}
+function restorePlayback(p){if(!p)return;speed=p.speed;$('speed').value=String(speed);if(!$('speed').value){speed=1;$('speed').value='1';}$('volume').value=p.volume;synth.setVolume(p.volume);$('loop-start').value=p.loopStart;$('loop-end').value=p.loopEnd;validLoop();loop=p.loop;$('loop-toggle').setAttribute('aria-pressed',loop);$('loop-controls').hidden=!loop;}
+function restoreScene(data){
+ const parsed=parseScene(data,defaults,groups,palettes,modeNames);pause();settings=parsed.settings;palettes.custom=settings.customColors.split(',');
+ const f=parsed.frame;if(f){for(const [key,id] of Object.entries({aspect:'aspect',width:'aspect-width',height:'aspect-height',resolution:'resolution',pixelWidth:'resolution-width',pixelHeight:'resolution-height',transparentFormat:'transparent-format',fps:'fps',bitrate:'bitrate',range:'export-range'}))$(id).value=f[key];$('export-transparent').checked=f.transparent;$('export-audio').checked=f.includeAudio;updateFrameChoice();}
+ if(parsed.audio){pendingSceneAudio=parsed.audio;if(external.buffer&&external.name===parsed.audio.name){Object.assign(external,parsed.audio);pendingSceneAudio=null;}else if(!external.buffer){Object.assign(external,parsed.audio);}}
+ restorePlayback(parsed.playback);pendingScenePlayback=parsed.media.midi&&parsed.media.midi!==title?{title:parsed.media.midi,settings:parsed.playback}:null;
+ buildControls();[...tracks.values()].forEach((tr,i)=>tr.color=parsed.trackColors[i]||palettes[settings.preset][i%6]);restoreTrackSettings(parsed.tracks);pendingSceneTracks=parsed.tracks;
+ buildTracks();syncAudioControls();synth.setSpace(settings.space);reschedule();persist();
+ const needed=[];if(parsed.media.midi&&parsed.media.midi!==title)needed.push('MIDI: '+parsed.media.midi);if(parsed.audio?.name&&(!external.buffer||external.name!==parsed.audio.name))needed.push('audio: '+parsed.audio.name);if(parsed.media.image&&(!backgroundImage||backgroundName!==parsed.media.image))needed.push('image: '+parsed.media.image);
+ $('scene-status').textContent=needed.length?'Scene restored. Reselect '+needed.join('; ')+'.':'Scene settings restored, including all particle layers.';toast('Scene settings imported.');
+}
+$('save-look').addEventListener('click',()=>{try{saveBlob(new Blob([JSON.stringify(captureScene(),null,2)],{type:'application/json'}),`${safeName()}-scene.json`);$('scene-status').textContent='Scene settings exported. Media files are referenced by name and remain separate.';}catch(error){toast(error.message);}});
 $('load-look').addEventListener('click',()=>$('look-input').click());
-$('look-input').addEventListener('change',async e=>{
- if(recording)return;const file=e.target.files[0];if(!file)return;
- try{if(file.size>256000)throw Error('That preset file is too large.');const look=JSON.parse(await file.text());if(recording)return;if(look.format!=='prism-look'||look.version!==1||!look.settings)throw Error('Choose a Prism look preset.');
-  const next={...defaults};for(const key of Object.keys(defaults)){const value=look.settings[key];if(typeof value===typeof defaults[key]&&(typeof value!=='number'||Number.isFinite(value)))next[key]=value;}
-  for(const key of ['background','playheadColor','bgTint','dustColor'])if(!/^#[0-9a-f]{6}$/i.test(next[key]))next[key]=defaults[key];
-  if(!/^(#[0-9a-f]{6},){5}#[0-9a-f]{6}$/i.test(next.customColors))next.customColors=defaults.customColors;
-  if(!Object.hasOwn(modeNames,next.mode))next.mode=defaults.mode;if(!Object.hasOwn(palettes,next.preset))next.preset=defaults.preset;
-  settings=next;palettes.custom=next.customColors.split(',');buildControls();[...tracks.values()].forEach((tr,i)=>tr.color=Array.isArray(look.trackColors)&&/^#[0-9a-f]{6}$/i.test(look.trackColors[i])?look.trackColors[i]:palettes[settings.preset][i%6]);buildTracks();synth.setSpace(settings.space);reschedule();persist();toast('Look loaded.');
- }catch(error){toast(error.message||'Could not load this preset.');}finally{$('look-input').value='';}
-});
+$('look-input').addEventListener('change',async e=>{if(recording||assetBusy)return;const file=e.target.files[0];if(!file)return;try{if(file.size>1024*1024)throw Error('Choose a scene settings JSON smaller than 1 MB.');const data=JSON.parse(await file.text());if(recording||assetBusy)return;restoreScene(data);}catch(error){toast(error.message||'Could not import scene settings.');}finally{$('look-input').value='';}});
 let previewRatio=16/9;
 function getFrameSize(){return $('resolution').value==='custom'?resolveCustomResolution($('resolution-width').value,$('resolution-height').value):resolveFrame($('aspect').value,$('aspect-width').value,$('aspect-height').value,Number($('resolution').value));}
 function fitPreview(){const stage=$('stage');const size=fitFrame(stage.clientWidth,stage.clientHeight,previewRatio);canvas.style.width=`${size.width}px`;canvas.style.height=`${size.height}px`;}
 function updateFrameChoice(){
  const custom=$('resolution').value==='custom',transparent=$('export-transparent').checked;
  $('custom-resolution').hidden=!custom;$('custom-aspect').hidden=custom||$('aspect').value!=='custom';$('aspect').disabled=custom||recording;
- canvas.classList.toggle('transparent-preview',transparent);$('record').textContent=transparent?'Export transparent WebM':'Export MP4';
+ canvas.classList.toggle('transparent-preview',transparent);const prores=transparent&&$('transparent-format').value==='prores';$('record').textContent=prores?'Export ProRes MOV':transparent?'Export transparent WebM':'Export MP4';$('transparent-format-field').hidden=!transparent;$('bitrate').disabled=prores||recording;$('format-note').textContent=prores?'ProRes 4444: full-resolution color + alpha, fixed editing quality, 24-bit PCM sound. Large files; allow extra time and disk space. In Adobe, interpret alpha as Straight (Unmatted) if needed.':'The bitrate selector controls MP4 / WebM compression quality.';
  try{const size=getFrameSize();previewRatio=size.ratio;fitPreview();$('frame-error').hidden=true;
   $('frame-info').textContent=`${size.width} × ${size.height} px. Preview and export use this frame. ${custom?'Exact pixel dimensions set the aspect ratio.':'Preset sizes round to even pixels.'} Encoder support depends on your browser and device.`;
   $('record').disabled=recording||assetBusy;$('record-live').disabled=recording||assetBusy||transparent;
-  try{localStorage.setItem('prism-frame',JSON.stringify({aspect:$('aspect').value,width:$('aspect-width').value,height:$('aspect-height').value,resolution:$('resolution').value,pixelWidth:$('resolution-width').value,pixelHeight:$('resolution-height').value,transparent}));}catch{}
+  try{localStorage.setItem('prism-frame',JSON.stringify({aspect:$('aspect').value,width:$('aspect-width').value,height:$('aspect-height').value,resolution:$('resolution').value,pixelWidth:$('resolution-width').value,pixelHeight:$('resolution-height').value,transparentFormat:$('transparent-format').value,transparent}));}catch{}
  }catch(error){$('frame-error').textContent=error.message;$('frame-error').hidden=false;$('record').disabled=true;$('record-live').disabled=true;}
 }
 try{const frame=JSON.parse(localStorage.getItem('prism-frame')||'null');if(frame&&['1.7777777778','0.5625','1','custom'].includes(frame.aspect)&&['1280','1920','3840','custom'].includes(frame.resolution)){
  if(frame.resolution==='custom')resolveCustomResolution(frame.pixelWidth,frame.pixelHeight);else resolveFrame(frame.aspect,frame.width,frame.height,Number(frame.resolution));
- $('aspect').value=frame.aspect;$('aspect-width').value=frame.width;$('aspect-height').value=frame.height;$('resolution').value=frame.resolution;$('resolution-width').value=frame.pixelWidth||1920;$('resolution-height').value=frame.pixelHeight||1080;$('export-transparent').checked=frame.transparent===true;
+ $('aspect').value=frame.aspect;$('aspect-width').value=frame.width;$('aspect-height').value=frame.height;$('resolution').value=frame.resolution;$('resolution-width').value=frame.pixelWidth||1920;$('resolution-height').value=frame.pixelHeight||1080;$('export-transparent').checked=frame.transparent===true;$('transparent-format').value=frame.transparentFormat==='webm'?'webm':'prores';
 }}catch{}
-for(const id of ['aspect','resolution','export-transparent'])$(id).addEventListener('change',updateFrameChoice);
+for(const id of ['aspect','resolution','export-transparent','transparent-format'])$(id).addEventListener('change',updateFrameChoice);
 for(const id of ['aspect-width','aspect-height','resolution-width','resolution-height'])$(id).addEventListener('input',updateFrameChoice);
 if(globalThis.ResizeObserver)new ResizeObserver(fitPreview).observe($('stage'));else window.addEventListener('resize',fitPreview);
 document.addEventListener('fullscreenchange',fitPreview);
