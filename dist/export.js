@@ -5,9 +5,29 @@ import {Output, Mp4OutputFormat, WebMOutputFormat, MovOutputFormat, VideoSampleS
 import {createExportDestination} from './export-storage.js';
 
 let softwareAacReady=false;
-let proresReady=false;
-export async function ensureProResEncoder(){
- if(!proresReady){const {registerProResEncoder}=await import('./vendor/prores/prores-encoder-mediabunny.mjs');registerProResEncoder({workers:Math.min(2,globalThis.navigator?.hardwareConcurrency||1)});proresReady=true;}
+// Keep a CPU available for drawing/UI, and bound the workers' pixel buffers.
+// deviceMemory is an approximate browser hint; use a conservative default.
+export function proresWorkerCount(width=1920,height=1080,hardware=globalThis.navigator){
+ const cores=Math.max(1,Math.floor(hardware?.hardwareConcurrency||4));
+ const memoryGiB=Math.max(1,Number(hardware?.deviceMemory)||4);
+ const budget=Math.min(1536,memoryGiB*192)*1024*1024;
+ const perWorker=32*1024*1024+width*height*32;
+ return Math.max(1,Math.min(8,cores>2?cores-1:cores,Math.floor(budget/perWorker)));
+}
+export async function ensureProResEncoder(width,height){
+ const {registerProResEncoder}=await import('./vendor/prores/prores-encoder-mediabunny.mjs');
+ const workers=proresWorkerCount(width,height);
+ // The library registers once; subsequent calls update the next export's pool.
+ registerProResEncoder({workers});return typeof Worker==='undefined'?0:workers;
+}
+
+export function exportProgress(label,done,total,elapsedMs,kind){
+ const elapsed=Math.max(.001,elapsedMs/1000),rate=done/elapsed;
+ const remaining=Math.max(0,Math.ceil((total-done)/rate));
+ const eta=remaining>=60?`${Math.floor(remaining/60)}m ${remaining%60}s`:`${remaining}s`;
+ const estimate=elapsed>=2&&done>=10?` · ${rate.toFixed(1)} fps · ~${eta} left`:'';
+ const storage=kind==='file'?'Saving to disk':kind==='temporary'?'Writing to browser storage':'Writing to memory';
+ return `Exporting ${label} · ${Math.round(done/total*100)}%${estimate} · ${storage}`;
 }
 
 export async function ensureAudioEncoder(onProgress){
@@ -89,7 +109,7 @@ export async function exportMp4(options){
   const {canvas,draw,width,height,fps,bitrate,includeAudio,signal,onProgress,start,end,speed,fileHandle}=options;
   const timing=exportTiming(start,end,speed,fps),quality=new Quality({bitrate});
   const transparent=options.transparent===true,prores=transparent&&options.transparentFormat==='prores',codec=prores?'prores':transparent?'vp9':'avc',audioCodec=prores?'pcm-s24':transparent?'opus':'aac',label=prores?'ProRes MOV':transparent?'WebM':'MP4';
-  if(prores){onProgress('Loading ProRes 4444 encoder…');await ensureProResEncoder();}
+  if(prores){onProgress('Loading ProRes 4444 encoder…');await ensureProResEncoder(width,height);}
   const videoConfig={codec,quality,alpha:transparent?'keep':'discard',latencyMode:'quality',keyFrameInterval:2,...(prores?{fullCodecString:'ap4h'}:{})};
   check(signal);
   if(!await canEncodeVideo(codec,{width,height,...videoConfig}))throw Error(`This browser cannot export ${prores?'ProRes MOV':transparent?'VP9 WebM':'H.264 MP4'} at these settings. Try a lower resolution or another browser.`);
@@ -111,7 +131,8 @@ export async function exportMp4(options){
     let audioSource;
     if(includeAudio){audioSource=new AudioBufferSource({codec:audioCodec,quality:new Quality({bitrate:320000})});output.addAudioTrack(audioSource);}
     await output.start();
-    const sectionFrames=fps*5;
+    const sectionFrames=fps*5,started=performance.now();
+    let lastYield=started,lastProgress=0;
     for(let section=0;section<timing.frames;section+=sectionFrames){
       check(signal);
       const stopFrame=Math.min(timing.frames,section+sectionFrames),offset=section/fps,length=(stopFrame-section)/fps;
@@ -133,7 +154,13 @@ export async function exportMp4(options){
           const sample=new VideoSample(rgba,{format:'RGBA',codedWidth:width,codedHeight:height,timestamp:i/fps,duration:1/fps});
           try{await video.add(sample);}finally{sample.close();}
         }else await video.add(i/fps,1/fps);
-        if(prores||i%5===0){onProgress(`Exporting ${label} · ${Math.round((i+1)/timing.frames*100)}% · ${destination.kind==='file'?'Saving to disk':destination.kind==='temporary'?'Writing to browser storage':'Writing to memory'}`);await yieldToUI();}
+        const tick=performance.now();
+        if(tick-lastProgress>=250||i===timing.frames-1){
+          onProgress(exportProgress(label,i+1,timing.frames,tick-started,destination.kind));lastProgress=tick;
+        }
+        // Yield by elapsed work, not on every frame (nested timers are clamped
+        // by browsers). Encoder backpressure still bounds queued frames.
+        if(tick-lastYield>=50){await yieldToUI();lastYield=performance.now();}
       }
     }
     check(signal);video.close();audioSource?.close();onProgress(`Finalizing ${label}…`);await output.finalize();check(signal);

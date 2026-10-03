@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {exportTiming,audioWindow} from '../dist/export.js';
+import {exportTiming,audioWindow,proresWorkerCount,exportProgress} from '../dist/export.js';
 
 const source=await readFile(new URL('../dist/export.js',import.meta.url),'utf8');
 async function mocked(){
@@ -89,4 +89,19 @@ test('transparent export uses VP9 alpha and WebM disk output; MP4 remains opaque
 test('transparent export rejects unavailable Opus before opening destination',async()=>{
  const {state,module}=await mocked();state.audioSupported=false;globalThis.OfflineAudioContext=class{};
  try{await assert.rejects(module.exportMp4({...options(state),transparent:true,includeAudio:true}),/Opus/);assert.equal(state.destination,undefined);}finally{delete globalThis.OfflineAudioContext;}
+});
+
+
+test('ProRes scales CPU use while limiting memory at large resolutions',()=>{
+ assert.equal(proresWorkerCount(1920,1080,{hardwareConcurrency:16,deviceMemory:8}),8);
+ assert.equal(proresWorkerCount(1280,720,{hardwareConcurrency:4,deviceMemory:4}),3);
+ assert.equal(proresWorkerCount(1920,1080,{hardwareConcurrency:1,deviceMemory:1}),1);
+ assert.ok(proresWorkerCount(3840,2160,{hardwareConcurrency:16,deviceMemory:4})<=2);
+ assert.ok(proresWorkerCount(8192,4096,{hardwareConcurrency:32,deviceMemory:1})>=1);
+});
+test('time estimate waits for samples, stays approximate and identifies storage',()=>{
+ assert.doesNotMatch(exportProgress('MOV',1,300,200,'file'),/left/);
+ assert.match(exportProgress('MOV',30,300,3000,'file'),/10.0 fps · ~27s left · Saving to disk/);
+ assert.match(exportProgress('MOV',30,3000,3000,'temporary'),/~4m 57s left · Writing to browser storage/);
+ assert.doesNotMatch(exportProgress('MOV',0,300,0,'buffer'),/Infinity|NaN/);
 });

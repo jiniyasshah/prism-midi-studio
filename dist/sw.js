@@ -1,4 +1,4 @@
-const CACHE='prism-midi-v10';
+const CACHE='prism-midi-v11';
 const ASSETS=['./','./index.html','./style.css','./app.js','./frame-size.js','./scene-settings.js','./midi.js','./audio.js','./audio-sync.js','./studio-visuals.js','./atmosphere.js','./creative-scenes.js','./export.js','./export-storage.js','./vendor/prores/prores-encoder-mediabunny.mjs','./vendor/prores/prores-core.mjs','./vendor/prores/prores-encoder-parallel.mjs','./vendor/aac-encoder.mjs','./vendor/mediabunny.mjs','./icon.svg','./icon-192.png','./icon-512.png','./manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('prism-midi-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
