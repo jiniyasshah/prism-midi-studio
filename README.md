@@ -111,3 +111,17 @@ ProRes export now selects a bounded parallel worker pool per export instead of a
 Validation: parallel encoding in real Node worker threads produced byte-identical ProRes packets to the single-thread path, preserving all 30 frames and timestamps. Cancellation closed the worker pool. Existing FFmpeg color/alpha decoding, audio, storage, and timing tests pass. Native-canvas/DOM checks cover all nine visual modes, the test export’s speed-adjusted range, and full export’s original range. The worker bridge is a test harness, not an actual browser test.
 
 An encoder-only benchmark on this environment (30 frames, 1280×720 RGBA gradient, no scene drawing or audio) took 1.14 s cold / 1.09 s warm before and 0.90 s cold / 0.48 s warm after. It used a Node worker bridge for the same vendored encoder. This is not an end-to-end browser speed guarantee; complicated particles/glows, high resolutions, and slower devices can still take substantial time.
+
+
+
+### Separate instrument MIDI files
+
+**Open MIDI files** accepts a multi-selection and starts a new arrangement. **Tracks → Add MIDI files**, or dropping files onto the app, adds one or more parts to the current arrangement (replacing the demo on the first import). Existing track mix, colors, visibility, and playhead survive additions. With several files loaded, collapsible sections in Tracks group controls by source instrument/file. Internal MIDI tracks and channels remain individually controllable.
+
+Each file is parsed separately before its notes are combined on the shared timeline. Original seconds, tempo changes, leading silence, note lengths, programs, and percussion channels are preserved. Files are not concatenated or automatically beat-matched. Parts exported from the same song origin/tempo map align naturally. If tempo maps differ, a persistent note explains that timing stays as exported and identifies the file used for beat guides (the first filename in deterministic sort order).
+
+Filename plus content hash gives stable source/track identities regardless of selection order. Re-adding an unchanged, identically named file skips it; changed content or differently named files are distinct sources. Scene JSON includes all MIDI filenames and stable track IDs; select the original media again to restore it. Existing single-file scene mixes remain compatible. Files stay on the device.
+
+Imports are transactional: a damaged or unsupported file leaves the loaded arrangement intact and reports the filename. Limits are 64 source files, 50 MB per file, 100 MB combined source data, and 300,000 combined notes. Both `.mid` and `.midi` are accepted.
+
+Validation: `node tests/midi-import.test.mjs`, `node tests/midi-app.test.mjs`, and `node tests/scene-settings.test.mjs`. Optional `PRISM_MIDI_FIXTURES=/path/to/attachments node tests/midi-import.test.mjs` checks the supplied 12 instrument files locally: 65 distinct tracks, 7,706 notes, matching variable-tempo maps, and every original note timestamp intact. The attachments are not included in the repository. App workflow tests exercise the production picker/drop handlers, append/replace behavior, grouped controls, saved filenames, legacy mix restoration, duplicate handling, and failed-import preservation using a minimal DOM fixture. Full browser rendering was not verified in this environment.
