@@ -4,6 +4,8 @@ import {Output, Mp4OutputFormat, WebMOutputFormat, MovOutputFormat, VideoSampleS
 
 import {createExportDestination} from './export-storage.js';
 import {PngMovWriter,canvasPng} from './png-mov.js';
+import {compactBudget,createMatteSurfaces,compactInstructions,afterEffectsImport} from './compact-export.js';
+import {writeStoredZip} from './zip-store.js';
 
 let softwareAacReady=false;
 // Keep a CPU available for drawing/UI, and bound the workers' pixel buffers.
@@ -107,6 +109,7 @@ export function audioWindow(song,trackStart,offset,length,speed){
 }
 
 export async function exportMp4(options){
+  if(options.transparent&&options.transparentFormat==='compact')return exportCompact(options);
   if(options.transparent&&options.transparentFormat==='png')return exportPngMov(options);
   const {canvas,draw,width,height,fps,bitrate,includeAudio,signal,onProgress,start,end,speed,fileHandle}=options;
   const timing=exportTiming(start,end,speed,fps),quality=new Quality({bitrate});
@@ -218,4 +221,56 @@ export async function exportPngMov(options){
   if(error.name==='QuotaExceededError')throw Error(destination?.kind==='file'?'The selected disk ran out of space. Choose another disk or a smaller frame size.':'Browser temporary storage filled. Open Prism in a full desktop browser and choose a save location.');
   throw error;
  }
+}
+
+
+export async function exportCompact(options){
+ const {canvas,draw,width,height,fps,start,end,speed,includeAudio,signal,onProgress,fileHandle}=options;
+ const timing=exportTiming(start,end,speed,fps),budget=compactBudget(timing.duration,options.compactQuality,includeAudio);
+ if(budget.maxBytes>=0xffffffff)throw Error('This compact package would exceed 4 GB. Choose a shorter range or smaller compact preset.');
+ const config=rate=>({codec:'avc',quality:new Quality({bitrate:rate}),alpha:'discard',bitrateMode:'variable',latencyMode:'quality',keyFrameInterval:2});
+ check(signal);
+ if(!await canEncodeVideo('avc',{width,height,...config(budget.color)})||!await canEncodeVideo('avc',{width,height,...config(budget.matte)}))throw Error('H.264 export is unavailable at these dimensions. Try 1080p or a desktop browser with WebCodecs.');
+ if(includeAudio){if(!globalThis.OfflineAudioContext)throw Error('Offline audio rendering is unavailable.');await ensureAudioEncoder(onProgress);}
+ let surfaces,packageDestination,colorDestination,matteDestination,colorOutput,matteOutput,colorResult,matteResult;
+ const started=performance.now();let lastProgress=0;
+ try{
+  surfaces=createMatteSurfaces(width,height);
+  packageDestination=await createExportDestination({fileHandle,raw:true,estimatedBytes:budget.estimatedBytes,extension:'zip',mimeType:'application/zip',maxBytes:budget.maxBytes});
+  colorDestination=await createExportDestination({estimatedBytes:budget.colorBytes,extension:'mp4',maxBytes:budget.colorLimit});
+  matteDestination=await createExportDestination({estimatedBytes:budget.matteBytes,extension:'mp4',maxBytes:budget.matteLimit});
+  colorOutput=new Output({format:new Mp4OutputFormat({fastStart:false}),target:colorDestination.target});
+  matteOutput=new Output({format:new Mp4OutputFormat({fastStart:false}),target:matteDestination.target});
+  const color=new CanvasSource(surfaces.color,config(budget.color)),matte=new CanvasSource(surfaces.matte,config(budget.matte));
+  colorOutput.addVideoTrack(color,{frameRate:fps});matteOutput.addVideoTrack(matte,{frameRate:fps});
+  let audioSource;if(includeAudio){audioSource=new AudioBufferSource({codec:'aac',quality:new Quality({bitrate:320000})});colorOutput.addAudioTrack(audioSource);}
+  await colorOutput.start();await matteOutput.start();
+  for(let section=0;section<timing.frames;section+=fps*5){
+   const stop=Math.min(timing.frames,section+fps*5);check(signal);
+   if(includeAudio){
+    onProgress(`Rendering audio · ${Math.round(section/timing.frames*100)}%`);
+    const window=audioWindow(options.external?.buffer&&options.external.mode==='file'?{notes:[]}:options.song,start,section/fps,(stop-section)/fps,speed);
+    if((window.skipFrames+window.lengthFrames)*8>256*1024*1024)throw Error('A very long held note needs too much audio memory. Export a shorter loop selection.');
+    const rendered=await renderAudio({...options,start:window.windowStart,duration:(window.skipFrames+window.lengthFrames)/48000,fadeStart:section===0,fadeEnd:stop===timing.frames,onProgress:()=>{}});
+    const audio=new AudioBuffer({numberOfChannels:2,length:window.lengthFrames,sampleRate:48000});for(let c=0;c<2;c++)audio.copyToChannel(rendered.getChannelData(c).subarray(window.skipFrames,window.skipFrames+window.lengthFrames),c);check(signal);await audioSource.add(audio);
+   }
+   for(let i=section;i<stop;i++){
+    check(signal);draw(timing.songTime(i));surfaces.draw(canvas);
+    // Await both encoders before changing either surface: matching frames and
+    // bounded queues even if one native encoder is slower than the other.
+    await color.add(i/fps,1/fps);await matte.add(i/fps,1/fps);
+    const tick=performance.now();if(tick-lastProgress>=250||i===timing.frames-1){onProgress(exportProgress('compact color + matte',i+1,timing.frames,tick-started,packageDestination.kind));lastProgress=tick;await yieldToUI();}
+   }
+  }
+  check(signal);color.close();matte.close();audioSource?.close();onProgress('Finalizing the two MP4 clips…');await colorOutput.finalize();await matteOutput.finalize();check(signal);
+  colorResult=await colorDestination.finish();matteResult=await matteDestination.finish();
+  const metadata={width,height,fps,duration:timing.duration};
+  const entries=[{name:'color.mp4',blob:colorResult.blob},{name:'alpha.mp4',blob:matteResult.blob},{name:'README.txt',blob:new Blob([compactInstructions(metadata)])},{name:'Import into After Effects.jsx',blob:new Blob([afterEffectsImport(metadata)])}];
+  onProgress('Packaging color, alpha, and Adobe import instructions…');const total=entries.reduce((n,e)=>n+e.blob.size,0);const bytes=await writeStoredZip(packageDestination,entries,signal,written=>{const tick=performance.now();if(tick-lastProgress>=250){onProgress(`Packaging Adobe ZIP · ${Math.min(99,Math.round(written/total*100))}%`);lastProgress=tick;}});check(signal);
+  const result=await packageDestination.finish();return {...result,stats:{bytes,elapsedMs:performance.now()-started,frames:timing.frames,duration:timing.duration}};
+ }catch(error){
+  await colorOutput?.cancel().catch(()=>{});await matteOutput?.cancel().catch(()=>{});
+  await packageDestination?.abort().catch(()=>{});await colorDestination?.abort().catch(()=>{});await matteDestination?.abort().catch(()=>{});
+  if(error.name==='QuotaExceededError')throw Error('Storage filled while exporting. Choose a disk with space and free browser temporary storage.');throw error;
+ }finally{surfaces?.close();await colorResult?.cleanup().catch(()=>{});await matteResult?.cleanup().catch(()=>{});}
 }

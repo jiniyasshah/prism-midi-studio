@@ -76,7 +76,7 @@ The app uses relative asset URLs and works at the root of the Vercel domain. Ver
 
 For local use, run `python3 -m http.server 8080 --directory dist`, then open `http://localhost:8080`. With Node.js 22 or newer, run `node --test tests/*.test.mjs` for the source checks. Optional raster checks require FFmpeg and `@napi-rs/canvas`, configured via `PRISM_CANVAS_MODULE` and `PRISM_RASTER_DIR` as described above. Runtime code is static browser JavaScript and needs no npm install.
 
-## Adobe editing export (current)
+## ProRes Adobe editing export
 
 Choose **Export → Transparent background → ProRes 4444 MOV · Adobe editing**, then **Export ProRes MOV**. This adds a dedicated software ProRes 4444 (`ap4h`) path with full-resolution color and alpha, plus optional 48 kHz, 24-bit stereo PCM. It reads straight RGBA directly from the canvas and avoids the WebCodecs VP9 color/alpha path. MP4 and WebM remain available for delivery. MOV uses fixed profile quality; the MP4/WebM bitrate selector is disabled for it. ProRes is a high-quality editing codec, not a mathematically lossless image format. The source canvas remains 8-bit RGBA.
 
@@ -126,13 +126,13 @@ Imports are transactional: a damaged or unsupported file leaves the loaded arran
 
 Validation: `node tests/midi-import.test.mjs`, `node tests/midi-app.test.mjs`, and `node tests/scene-settings.test.mjs`. Optional `PRISM_MIDI_FIXTURES=/path/to/attachments node tests/midi-import.test.mjs` checks the supplied 12 instrument files locally: 65 distinct tracks, 7,706 notes, matching variable-tempo maps, and every original note timestamp intact. The attachments are not included in the repository. App workflow tests exercise the production picker/drop handlers, append/replace behavior, grouped controls, saved filenames, legacy mix restoration, duplicate handling, and failed-import preservation using a minimal DOM fixture. Full browser rendering was not verified in this environment.
 
-### PNG MOV for smaller transparent editing files
+### PNG MOV for lossless transparent editing files
 
-Transparent export now defaults to **PNG MOV**: native PNG compression in a single QuickTime video, preserving the canvas's 8-bit RGBA losslessly. This is a video file, not a folder/image sequence. Adobe documents native PNG-in-QuickTime import in Premiere Pro and After Effects: https://blog.adobe.com/en/publish/2016/08/03/after-effects-cc-2015-3-13-8-1-bug-fix-update-is-now-available . ProRes 4444 and VP9 WebM remain selectable. PNG and ProRes do not use the MP4/WebM bitrate selector.
+The optional **PNG MOV** format uses native PNG compression in a single QuickTime video, preserving the canvas's 8-bit RGBA losslessly. This is a video file, not a folder/image sequence. Adobe documents native PNG-in-QuickTime import in Premiere Pro and After Effects: https://blog.adobe.com/en/publish/2016/08/03/after-effects-cc-2015-3-13-8-1-bug-fix-update-is-now-available . ProRes 4444 and VP9 WebM remain selectable. PNG and ProRes do not use the MP4/WebM bitrate selector.
 
 The PNG path submits a bounded queue of up to four native canvas encodes, writes frames in order, and avoids the ProRes WASM encoder and explicit main-canvas `getImageData` calls. Output streams to a chosen file or browser temporary storage. The MOV writer retains sample tables only and uses 64-bit media lengths/chunk offsets. Memory-only fallback enforces a 192 MiB actual-size limit. Cancellation and failures abort the destination; bounded native compression jobs may finish in the background but cannot write further output. Optional audio uses the same five-second offline-render windows and alignment, encoded as 48 kHz, 16-bit stereo PCM. ProRes keeps its existing 24-bit PCM path.
 
-The **3-second test** now reports actual output bytes and elapsed render time, plus an approximate full-range size/time projection. Complex sections can differ, so the projection is not a guarantee. **Smaller PNG MOV · 1280px / 30 fps** explicitly selects a lower output size while retaining the current aspect ratio (720p for 16:9). Selecting PNG itself does not reduce resolution or frame rate. Old browser-local ProRes preferences migrate once to PNG; newly selected ProRes choices and explicitly imported ProRes scene files remain respected.
+The **3-second test** now reports actual output bytes and elapsed render time, plus an approximate full-range size/time projection. Complex sections can differ, so the projection is not a guarantee. Selecting PNG does not reduce resolution or frame rate. It is an optional lossless format; the current compact preset below controls the recommended export workflow.
 
 Measured on the supplied 12-file arrangement, default falling-note visuals with particles, at 55–58 seconds (90 frames, no audio), using native Skia canvas and Node worker threads in this environment:
 
@@ -145,3 +145,26 @@ Measured on the supplied 12-file arrangement, default falling-note visuals with 
 This benchmark includes scene drawing and codec work, but discards streamed bytes instead of exercising disk I/O. Native-canvas/Node results do not establish browser or Adobe performance. The measured benefit at the same resolution was primarily file size (4.1× smaller), not a dramatic speed increase. Lossless transparent videos can still be large and slower computers can still take substantial time.
 
 Validation: `tests/png-mov.test.mjs` checks native-encode export routing, FFmpeg-decoded exact RGBA, audio sample values/channel order, frame timing, out-of-order encode completion, 64-bit offsets, cancellation, quota failures, and actual-cost reports. `tests/export-ui.test.mjs` checks MOV filename/picker selection, full/test ranges, result reporting, and preference migration. Existing ProRes alpha, export, storage, scene, and MIDI workflow tests remain in use. Actual opening inside Adobe and full browser performance have not been verified here.
+
+
+## Compact Adobe package (current transparent default)
+
+Choose **Use compact Adobe · 1080p / 30 fps**, then **Export compact Adobe package**. This explicitly selects 1920px longest edge at 30 fps, preserving the current aspect ratio. Other custom sizes and frame rates still work subject to native encoder support. The ZIP contains **two opaque H.264 videos**: `color.mp4` and grayscale `alpha.mp4`. Neither has embedded alpha. Extract the entire ZIP, then combine them using its `Import into After Effects.jsx` helper or the included Premiere Pro Track Matte Key instructions (Matte Luma). Optional AAC sound is only in `color.mp4`. Keep both clips aligned and identically scaled. Compression can soften fine edges and change colors; use a matching SDR workflow and do not grade the matte.
+
+| Compact preset | Color + matte target | 193.5 seconds with audio | Package hard limit |
+| --- | --- | ---: | ---: |
+| Smaller | 4 + 1 Mbps | ~129 MB | ~183 MB |
+| Balanced (default) | 8 + 2 Mbps | ~250 MB | ~346 MB |
+| High detail | 16 + 4 Mbps | ~492 MB | ~672 MB |
+
+MB in this table means 1,000,000 bytes. These are target sizes, not measured exports. Both clip writes and ZIP writes enforce limits; if the encoder exceeds its allowance, export fails and partial files are discarded. Actual output varies with scene complexity. The panel updates the estimate with range, playback speed, audio and quality. The three-second test reports actual size and time on the user's device. Old browser-local PNG/ProRes defaults migrate once to compact; explicit new choices and imported scene formats remain respected. Compact quality is included in scene JSON.
+
+The scene is drawn once per frame, split into straight RGB and a full-resolution grayscale opacity mask, then fed to two native H.264 encoders at identical timestamps. This avoids per-frame lossless PNG and software ProRes compression; it does not guarantee real-time rendering or hardware acceleration. Canvas drawing, pixel extraction, audio synthesis and browser encoder performance still affect speed. Temporary clips use browser disk storage where available, then stream into a stored ZIP without another compression pass. Cancellation aborts all destinations and cleans temporary files. Memory-only environments retain a 192 MiB per-destination limit; long exports need temporary browser storage even when the final ZIP saves directly to disk. Packages over the classic ZIP 4 GB limit are rejected up front.
+
+PNG MOV and ProRes remain available for single-file embedded alpha; both can be extremely large. The standard opaque MP4 path is unchanged. All new modules are static files, cached by the service worker; Vercel needs no additional configuration or dependencies.
+
+Validation: compact tests cover paired timestamps and frame counts, audio-only-in-color routing, encoder preflight, cancellation/failure cleanup, enforced file limits, straight color/matte reconstruction, CRC-checked ZIP extraction, UI filename/preferences, and the generated After Effects helper in mocked modern/legacy scripting hosts. Existing PNG/ProRes decoding, storage, MIDI import and scene tests also run. Browser WebCodecs performance and actual import inside Adobe have not been verified in this environment.
+
+Adobe workflow references:
+- https://helpx.adobe.com/premiere/desktop/add-video-effects/effects-and-transitions-library/keying-effects.html
+- https://helpx.adobe.com/after-effects/desktop/work-with-transparency-and-compositing/work-with-track-mattes-and-traveling-mattes/track-mattes-and-traveling-mattes.html

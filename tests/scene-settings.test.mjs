@@ -10,7 +10,7 @@ const groupCode=app.slice(app.indexOf('const originalGroups='),app.indexOf('cons
 const groups=vm.runInNewContext(groupCode+';groups');
 const parse=data=>parseScene(data,defaults,groups,palettes,modeNames);
 test('scene settings round trip includes particles, switches, custom frame, track mix and audio timing',()=>{
- const data={format:'prism-scene',version:2,settings:{...defaults,dustShape:'petals',dustFlutter:1.25,dustSpin:2,dustEnabled:false,bgDust:117,keyboard:false,grid:false},tracks:[{id:1,name:'Piano',color:'#123456',volume:.4,pan:-.3,instrument:'auto',visible:false,mute:true,solo:false}],audio:{name:'recording.wav',mode:'blend',offset:-.23,rate:1.02,gain:.7},frame:{aspect:'custom',width:'4',height:'5',resolution:'custom',pixelWidth:'1200',pixelHeight:'1500',transparent:true,transparentFormat:'prores',fps:'60',bitrate:'25000000',range:'loop',includeAudio:true},playback:{speed:1.5,volume:.8,loop:true,loopStart:2,loopEnd:12}};
+ const data={format:'prism-scene',version:2,settings:{...defaults,dustShape:'petals',dustFlutter:1.25,dustSpin:2,dustEnabled:false,bgDust:117,keyboard:false,grid:false},tracks:[{id:1,name:'Piano',color:'#123456',volume:.4,pan:-.3,instrument:'auto',visible:false,mute:true,solo:false}],audio:{name:'recording.wav',mode:'blend',offset:-.23,rate:1.02,gain:.7},frame:{aspect:'custom',width:'4',height:'5',resolution:'custom',pixelWidth:'1200',pixelHeight:'1500',transparent:true,transparentFormat:'prores',compactQuality:'high',fps:'60',bitrate:'25000000',range:'loop',includeAudio:true},playback:{speed:1.5,volume:.8,loop:true,loopStart:2,loopEnd:12}};
  const restored=parse(JSON.parse(JSON.stringify(data)));for(const key of ['dustShape','dustFlutter','dustSpin','dustEnabled','bgDust','keyboard','grid'])assert.equal(restored.settings[key],data.settings[key]);
  assert.deepEqual(restored.tracks,data.tracks);assert.deepEqual(restored.frame,data.frame);assert.deepEqual(restored.audio,data.audio);assert.deepEqual(restored.playback,data.playback);
 });
@@ -25,3 +25,4 @@ test('all settings are grouped once, including quick visibility switches',()=>{
  for(const key of Object.keys(defaults))if(!['preset','mode','customColors'].includes(key))assert.ok(keys.includes(key),key);
  const visibility=groups.find(g=>g.id==='visibility').items.map(x=>x[0]);for(const key of ['keyboard','grid','octaveLines','beatLines','particles','dustEnabled','imageEnabled','noteLabels'])assert.ok(visibility.includes(key));
 });
+

@@ -13,14 +13,19 @@ function app(){
 }
 test('PNG test export selects MOV and reports actual cost without changing full export range',async()=>{
  const {ctx,state,$}=app();await ctx.startDirectExport(true);
- assert.deepEqual(state.picker,['song-prism-test.mov',true,true]);assert.equal(state.options.transparentFormat,'png');assert.equal(state.options.start,5);assert.equal(state.options.end,11);
+ assert.deepEqual(state.picker,['song-prism-test.mov',true,true,false]);assert.equal(state.options.transparentFormat,'png');assert.equal(state.options.start,5);assert.equal(state.options.end,11);
  assert.match($('export-result').textContent,/5.0 MB/);assert.match($('export-result').textContent,/Full range/);assert.equal(state.recording,false);
  await ctx.startDirectExport(false);assert.equal(state.options.start,0);assert.equal(state.options.end,180);assert.equal(state.picker[0],'song-prism.mov');
 });
 test('old local ProRes default migrates once; explicit new ProRes and WebM choices persist',()=>{
  const start=source.indexOf("try{const frame=JSON.parse(localStorage.getItem('prism-frame')");const end=source.indexOf("for(const id of ['aspect'",start);assert.ok(start>0&&end>start);
- for(const [format,revision,want] of [['prores',undefined,'png'],['prores',2,'prores'],['png',2,'png'],['webm',undefined,'webm']]){
+ for(const [format,revision,want] of [['prores',undefined,'compact'],['prores',3,'prores'],['png',3,'png'],['png',2,'compact'],['compact',3,'compact'],['webm',undefined,'webm']]){
   const {ctx,$}=app();ctx.resolveFrame=()=>{};ctx.resolveCustomResolution=()=>{};ctx.localStorage={getItem:()=>JSON.stringify({aspect:'1.7777777778',resolution:'1920',transparent:true,transparentFormat:format,transparentFormatRevision:revision})};
   vm.runInContext(source.slice(start,end),ctx);assert.equal($('transparent-format').value,want);
  }
+});
+
+test('compact UI chooses a ZIP, preserves quality preset, and labels it as a package',async()=>{
+ const {ctx,state,$}=app();$('transparent-format').value='compact';$('compact-quality').value='small';await ctx.startDirectExport(true);
+ assert.deepEqual(state.picker,['song-prism-test.zip',true,false,true]);assert.equal(state.options.transparentFormat,'compact');assert.equal(state.options.compactQuality,'small');
 });
