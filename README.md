@@ -125,3 +125,23 @@ Filename plus content hash gives stable source/track identities regardless of se
 Imports are transactional: a damaged or unsupported file leaves the loaded arrangement intact and reports the filename. Limits are 64 source files, 50 MB per file, 100 MB combined source data, and 300,000 combined notes. Both `.mid` and `.midi` are accepted.
 
 Validation: `node tests/midi-import.test.mjs`, `node tests/midi-app.test.mjs`, and `node tests/scene-settings.test.mjs`. Optional `PRISM_MIDI_FIXTURES=/path/to/attachments node tests/midi-import.test.mjs` checks the supplied 12 instrument files locally: 65 distinct tracks, 7,706 notes, matching variable-tempo maps, and every original note timestamp intact. The attachments are not included in the repository. App workflow tests exercise the production picker/drop handlers, append/replace behavior, grouped controls, saved filenames, legacy mix restoration, duplicate handling, and failed-import preservation using a minimal DOM fixture. Full browser rendering was not verified in this environment.
+
+### PNG MOV for smaller transparent editing files
+
+Transparent export now defaults to **PNG MOV**: native PNG compression in a single QuickTime video, preserving the canvas's 8-bit RGBA losslessly. This is a video file, not a folder/image sequence. Adobe documents native PNG-in-QuickTime import in Premiere Pro and After Effects: https://blog.adobe.com/en/publish/2016/08/03/after-effects-cc-2015-3-13-8-1-bug-fix-update-is-now-available . ProRes 4444 and VP9 WebM remain selectable. PNG and ProRes do not use the MP4/WebM bitrate selector.
+
+The PNG path submits a bounded queue of up to four native canvas encodes, writes frames in order, and avoids the ProRes WASM encoder and explicit main-canvas `getImageData` calls. Output streams to a chosen file or browser temporary storage. The MOV writer retains sample tables only and uses 64-bit media lengths/chunk offsets. Memory-only fallback enforces a 192 MiB actual-size limit. Cancellation and failures abort the destination; bounded native compression jobs may finish in the background but cannot write further output. Optional audio uses the same five-second offline-render windows and alignment, encoded as 48 kHz, 16-bit stereo PCM. ProRes keeps its existing 24-bit PCM path.
+
+The **3-second test** now reports actual output bytes and elapsed render time, plus an approximate full-range size/time projection. Complex sections can differ, so the projection is not a guarantee. **Smaller PNG MOV · 1280px / 30 fps** explicitly selects a lower output size while retaining the current aspect ratio (720p for 16:9). Selecting PNG itself does not reduce resolution or frame rate. Old browser-local ProRes preferences migrate once to PNG; newly selected ProRes choices and explicitly imported ProRes scene files remain respected.
+
+Measured on the supplied 12-file arrangement, default falling-note visuals with particles, at 55–58 seconds (90 frames, no audio), using native Skia canvas and Node worker threads in this environment:
+
+| Export | File size | Render time |
+| --- | ---: | ---: |
+| ProRes, 1920×1080 / 30 | 332,111,658 bytes (316.7 MiB) | 8.90 s |
+| PNG MOV, 1920×1080 / 30 | 80,512,201 bytes (76.8 MiB) | 8.45 s |
+| PNG MOV, 1280×720 / 30 | 53,811,243 bytes (51.3 MiB) | 6.28 s |
+
+This benchmark includes scene drawing and codec work, but discards streamed bytes instead of exercising disk I/O. Native-canvas/Node results do not establish browser or Adobe performance. The measured benefit at the same resolution was primarily file size (4.1× smaller), not a dramatic speed increase. Lossless transparent videos can still be large and slower computers can still take substantial time.
+
+Validation: `tests/png-mov.test.mjs` checks native-encode export routing, FFmpeg-decoded exact RGBA, audio sample values/channel order, frame timing, out-of-order encode completion, 64-bit offsets, cancellation, quota failures, and actual-cost reports. `tests/export-ui.test.mjs` checks MOV filename/picker selection, full/test ranges, result reporting, and preference migration. Existing ProRes alpha, export, storage, scene, and MIDI workflow tests remain in use. Actual opening inside Adobe and full browser performance have not been verified here.

@@ -3,6 +3,7 @@ import {scheduleAudioBuffer} from './audio-sync.js';
 import {Output, Mp4OutputFormat, WebMOutputFormat, MovOutputFormat, VideoSampleSource, VideoSample, CanvasSource, AudioBufferSource, Quality, canEncodeVideo, canEncodeAudio} from './vendor/mediabunny.mjs';
 
 import {createExportDestination} from './export-storage.js';
+import {PngMovWriter,canvasPng} from './png-mov.js';
 
 let softwareAacReady=false;
 // Keep a CPU available for drawing/UI, and bound the workers' pixel buffers.
@@ -106,6 +107,7 @@ export function audioWindow(song,trackStart,offset,length,speed){
 }
 
 export async function exportMp4(options){
+  if(options.transparent&&options.transparentFormat==='png')return exportPngMov(options);
   const {canvas,draw,width,height,fps,bitrate,includeAudio,signal,onProgress,start,end,speed,fileHandle}=options;
   const timing=exportTiming(start,end,speed,fps),quality=new Quality({bitrate});
   const transparent=options.transparent===true,prores=transparent&&options.transparentFormat==='prores',codec=prores?'prores':transparent?'vp9':'avc',audioCodec=prores?'pcm-s24':transparent?'opus':'aac',label=prores?'ProRes MOV':transparent?'WebM':'MP4';
@@ -164,11 +166,56 @@ export async function exportMp4(options){
       }
     }
     check(signal);video.close();audioSource?.close();onProgress(`Finalizing ${label}…`);await output.finalize();check(signal);
-    return await destination.finish();
+    const result=await destination.finish();return {...result,stats:{bytes:destination.bytesWritten,elapsedMs:performance.now()-started,frames:timing.frames,duration:timing.duration}};
   }catch(error){
     if(output)await output.cancel().catch(()=>{});
     if(destination)await destination.abort().catch(()=>{});
     if(error.name==='QuotaExceededError')throw Error(destination?.kind==='file'?'The selected disk ran out of space while writing the video. Free space or choose a different disk.':'Browser temporary storage filled while writing the video. Open Prism in a full desktop browser and choose a save location, or free browser storage and retry.');
     throw error;
   }
+}
+
+
+// Native PNG encoding avoids WASM ProRes and explicit getImageData round-trips.
+// PNG compression preserves the canvas RGBA without chroma subsampling.
+export async function exportPngMov(options){
+ const {canvas,draw,width,height,fps,start,end,speed,includeAudio,signal,onProgress,fileHandle}=options;
+ const timing=exportTiming(start,end,speed,fps);let destination;const pending=[];
+ if(!canvas.toBlob&&!canvas.convertToBlob)throw Error('PNG encoding is unavailable in this browser.');
+ if(includeAudio&&!globalThis.OfflineAudioContext)throw Error('Offline audio rendering is unavailable in this browser.');
+ check(signal);const started=performance.now();let lastProgress=0;
+ try{
+  destination=await createExportDestination({fileHandle,raw:true,estimatedBytes:0,extension:'mov',mimeType:'video/quicktime'});
+  const writer=new PngMovWriter(destination,{width,height,fps});await writer.start();
+  // toBlob/convertToBlob snapshot pixels when called. Bound the snapshots in
+  // flight while native encoders compress them concurrently; write in order.
+  const concurrency=Math.min(4,proresWorkerCount(width,height));let completed=0;
+  const drain=async()=>{
+   const png=await pending.shift();check(signal);await writer.addFrame(png);completed++;
+   const tick=performance.now();if(tick-lastProgress>=250||completed===timing.frames){onProgress(exportProgress('PNG MOV',completed,timing.frames,tick-started,destination.kind)+` · ${(writer.position/1048576).toFixed(1)} MB`);lastProgress=tick;await yieldToUI();}
+  };
+  for(let section=0;section<timing.frames;section+=fps*5){
+   const stop=Math.min(timing.frames,section+fps*5);check(signal);
+   if(includeAudio){
+    onProgress(`Rendering audio · ${Math.round(section/timing.frames*100)}%`);
+    const window=audioWindow(options.external?.buffer&&options.external.mode==='file'?{notes:[]}:options.song,start,section/fps,(stop-section)/fps,speed);
+    if((window.skipFrames+window.lengthFrames)*8>256*1024*1024)throw Error('A very long held note needs too much audio memory. Export a shorter loop selection.');
+    const audio=await renderAudio({...options,start:window.windowStart,duration:(window.skipFrames+window.lengthFrames)/48000,fadeStart:section===0,fadeEnd:stop===timing.frames,onProgress:()=>{}});
+    check(signal);await writer.addAudio(audio,window.skipFrames,window.lengthFrames);
+   }
+   for(let i=section;i<stop;i++){
+    check(signal);draw(timing.songTime(i));const encoded=canvasPng(canvas);encoded.catch(()=>{});pending.push(encoded);
+    if(pending.length>=concurrency)await drain();
+   }
+   while(pending.length)await drain();
+  }
+  check(signal);onProgress('Finalizing PNG MOV…');const bytes=await writer.finish();check(signal);
+  const result=await destination.finish();return {...result,stats:{bytes,elapsedMs:performance.now()-started,frames:timing.frames,duration:timing.duration}};
+ }catch(error){
+  // Native PNG tasks cannot be cancelled; only a bounded number finish in the
+  // background. Never write or finalize them after cancellation.
+  await destination?.abort().catch(()=>{});
+  if(error.name==='QuotaExceededError')throw Error(destination?.kind==='file'?'The selected disk ran out of space. Choose another disk or a smaller frame size.':'Browser temporary storage filled. Open Prism in a full desktop browser and choose a save location.');
+  throw error;
+ }
 }
