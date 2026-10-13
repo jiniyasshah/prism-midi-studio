@@ -1,3 +1,5 @@
+import {transcribeAudio} from './audio-transcription.js';
+import {validateAudioFile} from './transcription-core.js';
 import {demoSong,GM_NAMES} from './midi.js';
 import {importMidiFiles} from './midi-import.js';
 import {Synth} from './audio.js';
@@ -60,6 +62,7 @@ const groups=[
  defineGroup('MIDI synth sound','tracks','transpose brightness space',{id:'sound'})
 ];
 const synth=new Synth();let song,tracks=new Map(),title='First Light',isDemo=true,playing=false,position=0,anchorPos=0,anchorTime=0,speed=1,nextNote=0,loop=false,loopA=0,loopB=41,recording=false,recorder=null,recordStop=0,recordStart=0,cancelled=false,playRequest=0,recordChunks=[],captureStream=null,recordMime='',exportSize=null,installPrompt=null,toastTimer=0,dragDepth=0;
+let transcriptionFile=null,transcriptionResult=null,transcriptionAbort=null;
 const external={buffer:null,name:'',mode:'synth',offset:0,rate:1,gain:1,peaks:null};let externalVoice=null,assetBusy=false;
 let midiSources=[];
 let backgroundImage=null,backgroundName='',pendingSceneAudio=null,pendingSceneTracks=null,pendingScenePlayback=null;
@@ -225,7 +228,7 @@ async function openFiles(files,append=false){
 function validLoop(){loopA=clamp(Number($('loop-start').value)||0,0,Math.max(0,song.duration-.1));loopB=clamp(Number($('loop-end').value)||song.duration,loopA+.1,song.duration);$('loop-start').value=loopA.toFixed(1);$('loop-end').value=loopB.toFixed(1);updateCompactEstimate();if(loop&&playing&&(now()<loopA||now()>=loopB))seek(loopA);}
 function saveBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 function safeName(){return title.replace(/[^a-zA-Z0-9 _-]/g,'').trim().replace(/\s+/g,'-').slice(0,80)||'prism';}
-function recordUI(on){recording=on;document.body.classList.toggle('recording',on);$('record-overlay').hidden=!on;for(const id of ['open-file','load-demo','reset','play','restart','seek','speed','loop-toggle','loop-start','loop-end','loop-set-start','loop-set-end','record','record-test','fast-export','record-live','resolution','resolution-width','resolution-height','export-transparent','transparent-format','compact-quality','aspect','aspect-width','aspect-height','fps','bitrate','export-range','export-audio','snapshot'])$(id).disabled=on;for(const el of $$('#panel-visual input,#panel-visual select,#panel-visual button,#panel-scene input,#panel-scene select,#panel-scene button,#panel-tracks input,#panel-tracks select,#panel-tracks button,[data-mode],#preset,#volume')){if(on){el.dataset.exportDisabled=String(el.disabled);el.disabled=true;}else{el.disabled=el.dataset.exportDisabled==='true';delete el.dataset.exportDisabled;}}}
+function recordUI(on){recording=on;document.body.classList.toggle('recording',on);$('record-overlay').hidden=!on;for(const id of ['transcription-open','open-file','load-demo','reset','play','restart','seek','speed','loop-toggle','loop-start','loop-end','loop-set-start','loop-set-end','record','record-test','fast-export','record-live','resolution','resolution-width','resolution-height','export-transparent','transparent-format','compact-quality','aspect','aspect-width','aspect-height','fps','bitrate','export-range','export-audio','snapshot'])$(id).disabled=on;for(const el of $$('#panel-visual input,#panel-visual select,#panel-visual button,#panel-scene input,#panel-scene select,#panel-scene button,#panel-tracks input,#panel-tracks select,#panel-tracks button,[data-mode],#preset,#volume')){if(on){el.dataset.exportDisabled=String(el.disabled);el.disabled=true;}else{el.disabled=el.dataset.exportDisabled==='true';delete el.dataset.exportDisabled;}}}
 async function startDirectExport(testOnly=false){
   if(recording||assetBusy){if(assetBusy)toast('Wait for your media to finish loading.');return;}
   const oldPosition=now();pause();validLoop();
@@ -282,7 +285,43 @@ function syncAudioControls(){
  $('audio-controls').hidden=!external.buffer;$('audio-info').textContent=external.buffer?`${external.name} · ${fmt(external.buffer.duration)} · Exports follow the MIDI range.`:'Use the matching recording for your MIDI. MP3, WAV, FLAC, M4A or OGG, where supported.';
  $('audio-mode').value=external.mode;$('audio-offset').value=external.offset.toFixed(3);$('audio-rate').value=external.rate.toFixed(3);$('audio-gain').value=external.gain;$('audio-gain-label').textContent=`${Math.round(external.gain*100)}%`;drawAudioWaveform();
 }
-function mediaLoading(on){assetBusy=on;for(const id of ['open-audio','open-background','open-file','add-midi','load-demo','record','record-test','fast-export','record-live','play','seek','restart','speed','loop-toggle'])$(id).disabled=on;}
+function mediaLoading(on){assetBusy=on;for(const id of ['transcription-file','transcription-start','transcription-download','transcription-add','transcription-replace','transcription-onset','transcription-frame','transcription-min','open-audio','open-background','open-file','add-midi','load-demo','record','record-test','fast-export','record-live','play','seek','restart','speed','loop-toggle'])$(id).disabled=on;syncTranscriptionControls();}
+function syncTranscriptionControls(){
+ const busy=assetBusy||recording;
+ for(const id of ['transcription-file','transcription-onset','transcription-frame','transcription-min'])$(id).disabled=busy;
+ $('transcription-start').disabled=busy||!transcriptionFile;
+ for(const id of ['transcription-download','transcription-add','transcription-replace'])$(id).disabled=busy||!transcriptionResult;
+ $('transcription-progress-wrap').hidden=!transcriptionAbort;
+ $('transcription-result').hidden=!transcriptionResult;
+}
+function chooseTranscriptionFile(file){
+ if(recording||assetBusy||!file)return;
+ try{validateAudioFile(file);transcriptionFile=file;transcriptionResult=null;$('transcription-file-info').textContent=`${file.name} · ${(file.size/1048576).toFixed(1)} MB`;$('transcription-status').textContent='Ready. Adjust detection settings if needed, then extract MIDI.';$('transcription-status').dataset.error='false';}
+ catch(error){toast(error.message);}
+ finally{$('transcription-input').value='';syncTranscriptionControls();}
+}
+async function startTranscription(){
+ if(recording||assetBusy||!transcriptionFile)return;
+ pause();transcriptionAbort=new AbortController();transcriptionResult=null;mediaLoading(true);syncTranscriptionControls();$('transcription-status').dataset.error='false';$('transcription-progress').value=0;
+ const started=performance.now();
+ try{
+  transcriptionResult=await transcribeAudio(transcriptionFile,{signal:transcriptionAbort.signal,onsetThreshold:Number($('transcription-onset').value),frameThreshold:Number($('transcription-frame').value),minDuration:Number($('transcription-min').value),onProgress:({phase,fraction})=>{$('transcription-status').textContent=phase;$('transcription-progress').value=fraction;}});
+  $('transcription-status').textContent=`${transcriptionResult.noteCount.toLocaleString()} notes extracted from ${fmt(transcriptionResult.duration)} in ${Math.round((performance.now()-started)/1000)}s. Download MIDI or add it below.`;
+ }catch(error){$('transcription-status').textContent=error.name==='AbortError'?'Transcription cancelled. Your arrangement is unchanged.':error.message;$('transcription-status').dataset.error=String(error.name!=='AbortError');}
+ finally{transcriptionAbort=null;mediaLoading(false);syncTranscriptionControls();updateFrameChoice();}
+}
+async function importTranscription(append){
+ if(recording||assetBusy||!transcriptionResult)return;
+ const result=transcriptionResult;await openFiles([new File([result.bytes],result.name,{type:'audio/midi'})],append);syncTranscriptionControls();
+}
+$('transcription-open').addEventListener('click',()=>{showPanel('tracks');$('transcription-section').scrollIntoView({block:'start',behavior:'smooth'});$('transcription-file').focus();});
+$('transcription-file').addEventListener('click',()=>$('transcription-input').click());
+$('transcription-input').addEventListener('change',e=>chooseTranscriptionFile(e.target.files[0]));
+$('transcription-start').addEventListener('click',startTranscription);
+$('transcription-cancel').addEventListener('click',()=>{transcriptionAbort?.abort();$('transcription-status').textContent='Cancelling…';});
+$('transcription-download').addEventListener('click',()=>{if(transcriptionResult&&!assetBusy&&!recording)saveBlob(new Blob([transcriptionResult.bytes],{type:'audio/midi'}),transcriptionResult.name);});
+$('transcription-add').addEventListener('click',()=>importTranscription(true));
+$('transcription-replace').addEventListener('click',()=>importTranscription(false));
 async function openAudio(file){
  if(!file||recording||assetBusy)return;
  if(file.size>150*1024*1024){toast('Choose an audio file smaller than 150 MB.');return;}

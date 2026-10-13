@@ -1,8 +1,8 @@
 # Prism MIDI Studio
 
-An independent, dependency-free browser MIDI visualizer inspired by MiVi.
+An independent browser MIDI visualizer inspired by MiVi, with local audio-to-MIDI transcription.
 
-Serve `dist/` over HTTPS (or localhost). No build or external dependencies are required. MIDI data stays in the browser. The app includes a generated demo composition.
+Run `npm ci && npm run build`, then serve `dist/` over HTTPS (or localhost). The build bundles the local transcription worker, model and WebAssembly runtime. No application server is required. MIDI data stays in the browser. The app includes a generated demo composition.
 
 ## Features
 
@@ -69,12 +69,12 @@ Validation: encoder-routing tests verify VP9 alpha/WebM versus opaque AVC/MP4, e
 ## Deploy to Vercel
 
 1. Import this repository into Vercel as a new project.
-2. Keep the repository root as **Root Directory**. The checked-in `vercel.json` selects **Other**, no install/build command, and **dist** as the output directory.
-3. Deploy. No server, API key, database, environment variables, or runtime dependencies are needed.
+2. Keep the repository root as **Root Directory**. The checked-in `vercel.json` selects **Other**, `npm ci` for installation, `npm run build`, and **dist** as the output directory.
+3. Deploy. No server, API key, database, or environment variables are needed. Transcription assets are bundled at build time and served from the same site.
 
 The app uses relative asset URLs and works at the root of the Vercel domain. Vercel supplies HTTPS, required by browser encoding and storage APIs. `sw.js` is served with revalidation so future versions can update the offline cache. The `.openai/hosting.json` file is metadata for the existing Sites deployment; Vercel ignores it. Keep all files under `dist/vendor`, including licenses and the corresponding AAC source archive.
 
-For local use, run `python3 -m http.server 8080 --directory dist`, then open `http://localhost:8080`. With Node.js 22 or newer, run `node --test tests/*.test.mjs` for the source checks. Optional raster checks require FFmpeg and `@napi-rs/canvas`, configured via `PRISM_CANVAS_MODULE` and `PRISM_RASTER_DIR` as described above. Runtime code is static browser JavaScript and needs no npm install.
+For local use, run `npm ci && npm run build`, then `python3 -m http.server 8080 --directory dist`, then open `http://localhost:8080`. With Node.js 22 or newer, run `node --test tests/*.test.mjs` for the source checks. Optional raster checks require FFmpeg and `@napi-rs/canvas`, configured via `PRISM_CANVAS_MODULE` and `PRISM_RASTER_DIR` as described above. Runtime code remains static browser JavaScript. Installation and bundling are needed only during development/deployment.
 
 ## ProRes Adobe editing export
 
@@ -168,3 +168,26 @@ Validation: compact tests cover paired timestamps and frame counts, audio-only-i
 Adobe workflow references:
 - https://helpx.adobe.com/premiere/desktop/add-video-effects/effects-and-transitions-library/keying-effects.html
 - https://helpx.adobe.com/after-effects/desktop/work-with-transparency-and-compositing/work-with-track-mattes-and-traveling-mattes/track-mattes-and-traveling-mattes.html
+
+
+## Audio → MIDI (Basic Pitch)
+
+Open **Audio → MIDI** in the header or **Tracks → Audio → MIDI**. Select one audio recording up to 150 MiB (157,286,400 bytes), adjust detection settings if needed, then **Extract MIDI**. MP3, WAV, FLAC, M4A, OGG and other browser-decodable audio are accepted. A recording exactly at the limit is allowed. The original Audio playback importer remains available separately.
+
+Basic Pitch runs in a dedicated worker on this device. There is no audio upload, API key, paid service or Vercel function. Model/runtime files are served locally from the built site and downloaded on first use. Progress covers decoding, model loading and inference sections. Cancel terminates active inference; native browser audio decoding cannot itself be interrupted, so cancellation during decoding completes when decoding returns. Failed/cancelled transcription never replaces the arrangement.
+
+The result can be downloaded as a standard `.mid`, added to the current arrangement, or used as a new arrangement. Adding to the demo replaces the demo; adding to user MIDI preserves the existing tracks/mix and source grouping. Generated MIDI filenames and hashes use the existing scene/media identity workflow. Download generated MIDI before leaving the page so it can be reselected with saved scene settings. Original leading silence, absolute note times, polyphony, velocity estimates and trailing duration are retained. The MIDI timing grid is fixed at 120 BPM/500 PPQ for millisecond timing; this is not beat/tempo estimation. Prism's existing MIDI reader adds its normal one-second playback tail.
+
+Detection settings expose onset threshold, sustain threshold and minimum note duration. Lower onset values can find softer notes but introduce false positives. Basic Pitch is instrument-agnostic and best on an isolated pitched instrument or stem. This integration produces one note track; it does not perform instrument separation, drum transcription, lyric recognition or pitch-bend extraction. Full mixes, reverb and overlapping instruments can reduce accuracy. MIDI contains notes, not the source recording's sound; use Audio playback to attach the original recording if desired.
+
+Files are decoded/resampled to 22,050 Hz and downmixed per section. Inference uses 30-second central sections with two seconds of context at each edge, stitches continuing notes, and releases tensors after each section. The engine/model is released when its worker terminates. Input compression size is not decoded size: decoded PCM has a 512 MiB guard and generated notes retain the 300,000-note arrangement cap. Very long or multichannel recordings may require trimming even if the compressed file is under 150 MiB. Web Audio must allocate the decoded buffer before its size can be checked. Runtime/memory and accuracy depend on the recording and device.
+
+The build pins Spotify `@spotify/basic-pitch` 1.0.1, TensorFlow.js/WASM 4.22.0 and esbuild 0.25.0 with `package-lock.json`. A dependency override keeps one TensorFlow instance; the upstream TF3 WASM backend fails on the model's preprocessing, while TF4 is verified by the real-model test. SIMD runs without cross-origin isolation; multithreading is disabled. The build copies model weights, WASM binaries, notices and licenses to `dist/vendor/basic-pitch/` (generated, not committed). Basic Pitch and TensorFlow are Apache-2.0; Tone MIDI is MIT. Model operations are unmodified; Prism adds bounded processing and MIDI integration.
+
+Basic Pitch was chosen for its official browser implementation, small model and permissive license. Larger alternatives such as MuScriptor/NeuralNote v2 target native/server workflows and have noncommercial model terms, so they are not substituted into this static app.
+
+References: https://github.com/spotify/basic-pitch-ts and https://github.com/DamRsn/NeuralNote .
+
+Validation: `npm test` covers the 150 MiB boundary, pre-read rejection, stereo downmix, section seams, MIDI timing/polyphony and reimport, worker failures/cancellation, and real Basic Pitch inference on a synthetic pitched signal plus silence. The real-model test checks tensor counts return to baseline after every section. These checks do not establish transcription accuracy on arbitrary full mixes or performance on users' devices.
+
+UI workflow tests also cover detection options, result download/add/replace actions and no-note error recovery. Full browser end-to-end testing could not run in the execution environment; arbitrary recordings and user-device performance remain unverified.

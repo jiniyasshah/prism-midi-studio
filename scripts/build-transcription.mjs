@@ -1,0 +1,11 @@
+import {build} from 'esbuild';
+import {mkdir,cp,copyFile,writeFile} from 'node:fs/promises';
+const out='dist/vendor/basic-pitch';
+await mkdir(out,{recursive:true});
+await build({entryPoints:['scripts/transcription-worker.js'],outfile:out+'/worker.js',bundle:true,format:'iife',platform:'browser',target:'es2020',minify:true,legalComments:'linked'});
+await cp('node_modules/@spotify/basic-pitch/model',out+'/model',{recursive:true});
+for(const file of ['tfjs-backend-wasm.wasm','tfjs-backend-wasm-simd.wasm','tfjs-backend-wasm-threaded-simd.wasm'])await copyFile('node_modules/@tensorflow/tfjs-backend-wasm/dist/'+file,out+'/'+file);
+await copyFile('node_modules/@spotify/basic-pitch/LICENSE',out+'/APACHE-2.0.txt');
+await copyFile('node_modules/@tonejs/midi/LICENSE.md',out+'/TONE-MIDI-LICENSE.txt');
+await writeFile(out+'/NOTICE.txt','Spotify Basic Pitch 1.0.1: Copyright 2022 Spotify AB, Apache-2.0. Model and note decoding from https://github.com/spotify/basic-pitch-ts.\nTensorFlow.js and WASM backend 4.22.0: Copyright Google LLC, Apache-2.0.\nTone.js MIDI: MIT. See bundled license files and worker.js.LEGAL.txt.\nPrism bundles these dependencies; upstream source is unmodified. TensorFlow.js is pinned to 4.22.0 for WASM compatibility.\n');
+console.log('Built local Basic Pitch worker, model, WASM runtime and licenses.');
