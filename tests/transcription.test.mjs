@@ -49,3 +49,12 @@ test('real Basic Pitch WASM detects a synthetic A4 and releases tensors between 
   const silent=await engine.transcribe(new Float32Array(22050));assert.equal(silent.length,0);assert.equal(tf.memory().numTensors,baseline);
  }finally{engine.dispose();}
 });
+
+test('shared audio import reuses the decoded recording without reading/decoding it twice',async()=>{
+ const {worker}=fakeWorker();const result=await transcribeAudio({size:8,name:'loaded.wav',type:'audio/wav',arrayBuffer:()=>assert.fail('must reuse playback PCM')},{audioBuffer:decoded,workerFactory:()=>worker});assert.equal(result.noteCount,1);
+});
+test('existing high-rate audio resamples just one bounded section with native anti-aliasing',async()=>{
+ const {transcriptionSamples}=await import('../dist/audio-transcription.js');const calls={};
+ globalThis.OfflineAudioContext=class{constructor(channels,length,rate){calls.format=[channels,length,rate];this.destination={};}createBufferSource(){const source={connect(){},start(...args){calls.start=args;}};calls.source=source;return source;}async startRendering(){return {getChannelData:()=>new Float32Array(calls.format[1])};}};
+ try{const audio={sampleRate:48000},samples=await transcriptionSamples(audio,{start:28,end:62});assert.equal(calls.source.buffer,audio);assert.deepEqual(calls.format,[1,34*22050,22050]);assert.deepEqual(calls.start,[0,28,34]);assert.equal(samples.length,34*22050);}finally{delete globalThis.OfflineAudioContext;}
+});
